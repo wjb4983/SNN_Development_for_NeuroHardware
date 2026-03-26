@@ -1,23 +1,18 @@
-FROM python:3.11-slim
+FROM continuumio/miniconda3:24.7.1-0
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY pyproject.toml requirements.txt README.md ./
+COPY environment.yml requirements.txt pyproject.toml README.md ./
 COPY snn_bench ./snn_bench
 COPY scripts ./scripts
 COPY .env.example ./.env.example
 
 RUN mkdir -p /etc/Massive \
-    && pip install --upgrade pip \
-    && pip install -e .
+    && conda env create -f environment.yml \
+    && conda clean -afy
 
-ENTRYPOINT ["python", "-m", "snn_bench.scripts.train"]
-CMD ["--ticker", "AAPL", "--timeframe", "1D", "--epochs", "5", "--batch-size", "32", "--lr", "0.001", "--out-dir", "artifacts"]
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "snnbench"]
+CMD ["python", "-m", "snn_bench.scripts.train", "--ticker", "AAPL", "--timeframe", "1D", "--epochs", "5", "--batch-size", "32", "--lr", "0.001", "--out-dir", "artifacts"]

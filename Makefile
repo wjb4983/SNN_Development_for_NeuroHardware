@@ -24,23 +24,21 @@ train-run:
 	timeout 120s $(PYTHON) -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 
 docker-build:
-	timeout 1800s docker build -t $(IMAGE) .
+	timeout 2400s docker build -t $(IMAGE) .
 
 docker-cache:
 	timeout 1200s docker run --rm \
-	  --entrypoint python \
 	  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
 	  -v $(PWD)/src/data:/app/src/data \
 	  -v $(API_KEY_FILE):/etc/Massive/api-key:ro \
-	  $(IMAGE) -m snn_bench.scripts.cache_market_data --ticker AAPL --timeframe 1D --stock-years 5 --option-years 2
+	  $(IMAGE) python -m snn_bench.scripts.cache_market_data --ticker AAPL --timeframe 1D --stock-years 5 --option-years 2
 
 docker-smoke:
 	timeout 300s docker run --rm \
-	  --entrypoint python \
 	  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
 	  -v $(PWD)/src/data:/app/src/data \
 	  -v $(API_KEY_FILE):/etc/Massive/api-key:ro \
-	  $(IMAGE) -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
+	  $(IMAGE) python -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
 
 docker-train:
 	timeout 600s docker run --rm \
@@ -48,4 +46,4 @@ docker-train:
 	  -v $(PWD)/src/data:/app/src/data \
 	  -v $(PWD)/artifacts:/app/artifacts \
 	  -v $(API_KEY_FILE):/etc/Massive/api-key:ro \
-	  $(IMAGE) --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
+	  $(IMAGE) python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts

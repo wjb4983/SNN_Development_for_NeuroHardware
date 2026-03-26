@@ -90,23 +90,34 @@ Direct command:
 timeout 120s python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 ```
 
-## Run with Docker
+## Run with Docker (prebuilt Conda env inside image)
 
-Build:
+The image builds a full **Conda environment** (`snnbench`) with all required Python packages (including `numpy`), then executes commands inside that environment automatically.
+
+Build once:
 
 ```bash
-timeout 1800s docker build -t snn-bench:latest .
+timeout 2400s docker build -t snn-bench:latest .
 ```
 
 Cache pull in container:
 
 ```bash
 timeout 1200s docker run --rm \
-  --entrypoint python \
   -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
   -v "$PWD/src/data:/app/src/data" \
   -v "/etc/Massive/api-key:/etc/Massive/api-key:ro" \
-  snn-bench:latest -m snn_bench.scripts.cache_market_data --ticker AAPL --timeframe 1D --stock-years 5 --option-years 2
+  snn-bench:latest python -m snn_bench.scripts.cache_market_data --ticker AAPL --timeframe 1D --stock-years 5 --option-years 2
+```
+
+Smoke run in container:
+
+```bash
+timeout 300s docker run --rm \
+  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
+  -v "$PWD/src/data:/app/src/data" \
+  -v "/etc/Massive/api-key:/etc/Massive/api-key:ro" \
+  snn-bench:latest python -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
 ```
 
 Train in container:
@@ -117,7 +128,7 @@ timeout 600s docker run --rm \
   -v "$PWD/src/data:/app/src/data" \
   -v "$PWD/artifacts:/app/artifacts" \
   -v "/etc/Massive/api-key:/etc/Massive/api-key:ro" \
-  snn-bench:latest --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
+  snn-bench:latest python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 ```
 
 ## Developer Commands
