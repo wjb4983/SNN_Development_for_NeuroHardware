@@ -21,5 +21,7 @@ class BenchmarkConfig(BaseModel):
     end_year: int | None = None
     batch_size: int = 32
     epochs: int = 1
+    lr: float = 1e-3
     seed: int = 7
+    massive_api_key_file: Path = Path(r"C:\Users\wbott\.stoptions_analyzer\api_key.txt")
     data_paths: DataPaths = DataPaths()

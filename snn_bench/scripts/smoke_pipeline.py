@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
-import numpy as np
 from torch.utils.data import DataLoader
 
 from snn_bench.configs.settings import BenchmarkConfig
@@ -15,6 +13,7 @@ from snn_bench.feature_pipelines.basic_features import BasicFeaturePipeline
 from snn_bench.models.dummy_snn import DummySNN
 from snn_bench.tasks.binary_direction import BinaryDirectionDataset
 from snn_bench.trainers.basic_trainer import BasicTrainer
+from snn_bench.utils.secrets import load_massive_api_key
 
 
 def _safe_years(index_blob: dict) -> list[int]:
@@ -23,6 +22,7 @@ def _safe_years(index_blob: dict) -> list[int]:
 
 
 def run_smoke(cfg: BenchmarkConfig) -> dict:
+    api_key = load_massive_api_key(cfg.massive_api_key_file)
     snap = SnapshotCacheConnector(
         primary_dir=cfg.data_paths.snapshot_dir,
         fallback_dir=cfg.data_paths.external_snapshot_dir,
@@ -39,7 +39,7 @@ def run_smoke(cfg: BenchmarkConfig) -> dict:
     x, y = BasicFeaturePipeline().transform(bars)
 
     model = DummySNN(input_dim=x.shape[1])
-    trainer = BasicTrainer(model=model)
+    trainer = BasicTrainer(model=model, lr=cfg.lr)
     loader = DataLoader(BinaryDirectionDataset(x, y), batch_size=cfg.batch_size, shuffle=False)
 
     avg_loss = trainer.train_epoch(loader)
@@ -53,6 +53,7 @@ def run_smoke(cfg: BenchmarkConfig) -> dict:
         "rows_bars": int(len(bars)),
         "loss": float(avg_loss),
         "accuracy": float(acc),
+        "api_key_loaded": bool(api_key),
     }
 
 
@@ -60,12 +61,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run benchmark smoke pipeline")
     parser.add_argument("--ticker", default="AAPL")
     parser.add_argument("--timeframe", default="1D")
+    parser.add_argument("--epochs", type=int, default=1)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    cfg = BenchmarkConfig(ticker=args.ticker, timeframe=args.timeframe)
+    cfg = BenchmarkConfig(ticker=args.ticker, timeframe=args.timeframe, epochs=args.epochs)
     metrics = run_smoke(cfg)
     print(json.dumps(metrics, indent=2))
 
