@@ -1,6 +1,7 @@
 PYTHON ?= python
 PIP ?= pip
 IMAGE ?= snn-bench:latest
+API_KEY_FILE ?= /etc/Massive/api-key
 
 .PHONY: setup lint unit-test smoke-run train-run docker-build docker-smoke docker-train
 
@@ -25,15 +26,15 @@ docker-build:
 docker-smoke:
 	timeout 300s docker run --rm \
 	  --entrypoint python \
-	  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+	  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
 	  -v $(PWD)/src/data:/app/src/data \
-	  -v $(HOME)/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro \
+	  -v $(API_KEY_FILE):/etc/Massive/api-key:ro \
 	  $(IMAGE) -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
 
 docker-train:
 	timeout 600s docker run --rm \
-	  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+	  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
 	  -v $(PWD)/src/data:/app/src/data \
 	  -v $(PWD)/artifacts:/app/artifacts \
-	  -v $(HOME)/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro \
+	  -v $(API_KEY_FILE):/etc/Massive/api-key:ro \
 	  $(IMAGE) --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts

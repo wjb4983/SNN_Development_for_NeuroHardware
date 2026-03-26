@@ -37,13 +37,13 @@ The scripts auto-load the API key in this order:
 
 1. `MASSIVE_API_KEY` env var
 2. `MASSIVE_API_KEY_FILE` env var
-3. `C:\Users\wbott\.stoptions_analyzer\api_key.txt`
-4. `~/.stoptions_analyzer/api_key.txt`
+3. `/etc/Massive/api-key` (preferred)
+4. `~/.stoptions_analyzer/api_key.txt` (legacy fallback)
 
-Windows example:
+Linux example:
 
-```powershell
-$env:MASSIVE_API_KEY_FILE="C:\Users\wbott\.stoptions_analyzer\api_key.txt"
+```bash
+export MASSIVE_API_KEY_FILE=/etc/Massive/api-key
 ```
 
 ## Quickstart
@@ -106,9 +106,9 @@ Smoke check in container:
 ```bash
 timeout 300s docker run --rm \
   --entrypoint python \
-  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
   -v "$PWD/src/data:/app/src/data" \
-  -v "$HOME/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro" \
+  -v "/etc/Massive/api-key:/etc/Massive/api-key:ro" \
   snn-bench:latest -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
 ```
 
@@ -116,14 +116,16 @@ Train in container and write artifacts locally:
 
 ```bash
 timeout 600s docker run --rm \
-  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+  -e MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
   -v "$PWD/src/data:/app/src/data" \
   -v "$PWD/artifacts:/app/artifacts" \
-  -v "$HOME/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro" \
+  -v "/etc/Massive/api-key:/etc/Massive/api-key:ro" \
   snn-bench:latest --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 ```
 
-If your key is on Windows at `C:\Users\wbott\.stoptions_analyzer\api_key.txt`, either set `MASSIVE_API_KEY` directly or adapt the volume mount syntax for your shell.
+What Docker does: it packages this repo + dependencies, mounts your local market data into `/app/src/data`, mounts your API key file into `/etc/Massive/api-key`, then runs the Python training (or smoke) module inside an isolated container.
+
+If your key lives elsewhere, pass a different host file path in the mount (or set `MASSIVE_API_KEY` directly).
 
 ## Developer Commands
 

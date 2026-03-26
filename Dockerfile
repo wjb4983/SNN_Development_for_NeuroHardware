@@ -15,7 +15,8 @@ COPY snn_bench ./snn_bench
 COPY scripts ./scripts
 COPY .env.example ./.env.example
 
-RUN pip install --upgrade pip \
+RUN mkdir -p /etc/Massive \
+    && pip install --upgrade pip \
     && pip install -e .
 
 ENTRYPOINT ["python", "-m", "snn_bench.scripts.train"]

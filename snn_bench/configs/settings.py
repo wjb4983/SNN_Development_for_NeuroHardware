@@ -23,5 +23,5 @@ class BenchmarkConfig(BaseModel):
     epochs: int = 1
     lr: float = 1e-3
     seed: int = 7
-    massive_api_key_file: Path = Path(r"C:\Users\wbott\.stoptions_analyzer\api_key.txt")
+    massive_api_key_file: Path = Path("/etc/Massive/api-key")
     data_paths: DataPaths = DataPaths()
