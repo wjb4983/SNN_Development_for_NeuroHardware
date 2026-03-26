@@ -92,6 +92,39 @@ Artifacts written:
 5. **Evaluate** with `binary_accuracy`.
 6. **Swap modules** (new connector/pipeline/model/trainer/eval) without changing orchestration.
 
+
+## Run with Docker (recommended for new clones)
+
+Build once:
+
+```bash
+timeout 1800s docker build -t snn-bench:latest .
+```
+
+Smoke check in container:
+
+```bash
+timeout 300s docker run --rm \
+  --entrypoint python \
+  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+  -v "$PWD/src/data:/app/src/data" \
+  -v "$HOME/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro" \
+  snn-bench:latest -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
+```
+
+Train in container and write artifacts locally:
+
+```bash
+timeout 600s docker run --rm \
+  -e MASSIVE_API_KEY_FILE=/run/secrets/api_key.txt \
+  -v "$PWD/src/data:/app/src/data" \
+  -v "$PWD/artifacts:/app/artifacts" \
+  -v "$HOME/.stoptions_analyzer/api_key.txt:/run/secrets/api_key.txt:ro" \
+  snn-bench:latest --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
+```
+
+If your key is on Windows at `C:\Users\wbott\.stoptions_analyzer\api_key.txt`, either set `MASSIVE_API_KEY` directly or adapt the volume mount syntax for your shell.
+
 ## Developer Commands
 
 ```bash
@@ -100,6 +133,9 @@ make lint
 make unit-test
 make smoke-run
 make train-run
+make docker-build
+make docker-smoke
+make docker-train
 ```
 
 All commands are non-interactive and use explicit `timeout` bounds.
