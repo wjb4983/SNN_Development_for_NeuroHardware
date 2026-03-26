@@ -1,0 +1,9 @@
+ticker: AAPL
+timeframe: 1D
+batch_size: 32
+epochs: 1
+seed: 7
+data_paths:
+  snapshot_dir: src/data
+  external_snapshot_dir: ../stoptions_analyzer/src/data
+  backtest_root: src/data/backtest_cache

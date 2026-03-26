@@ -1,0 +1,16 @@
+PYTHON ?= python
+PIP ?= pip
+
+.PHONY: setup lint unit-test smoke-run
+
+setup:
+	timeout 180s $(PIP) install -e .
+
+lint:
+	timeout 120s $(PYTHON) -m compileall snn_bench tests
+
+unit-test:
+	timeout 120s $(PYTHON) -m unittest discover -s tests -p 'test_*.py'
+
+smoke-run:
+	timeout 120s $(PYTHON) -m snn_bench.scripts.smoke_pipeline --ticker AAPL --timeframe 1D
