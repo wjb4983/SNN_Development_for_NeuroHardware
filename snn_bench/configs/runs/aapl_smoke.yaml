@@ -1,0 +1,15 @@
+ticker: AAPL
+timeframe: 1D
+run_name: aapl_smoke
+seed: 7
+model:
+  name: snntorch_lif
+  params:
+    hidden_dim: 32
+    lr: 0.001
+    batch_size: 32
+    epochs: 2
+smoke:
+  enabled: true
+  sample_size: 256
+  epochs: 1

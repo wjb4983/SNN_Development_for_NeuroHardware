@@ -167,6 +167,34 @@ timeout 2400s docker build --no-cache -t snn-bench:latest .
 
 This Dockerfile now provisions `libstdcxx-ng`/`libgcc-ng` in Conda and exports `LD_LIBRARY_PATH` to the Conda lib directory.
 
+
+## Model Zoo (shared train/eval API)
+
+Supported models via `--model`:
+- `logreg` (logistic regression)
+- `gbm` (`xgboost` if available, otherwise sklearn gradient boosting)
+- `mlp`
+- `snntorch_lif`
+- `norse_lsnn`
+- `spikingjelly_lif`
+
+Config-driven run examples:
+
+```bash
+timeout 120s python -m snn_bench.scripts.train --config snn_bench/configs/runs/spy_smoke.yaml --out-dir artifacts --max-years 1
+```
+
+Fast smoke mode (small sample + few epochs):
+
+```bash
+timeout 120s python -m snn_bench.scripts.train --ticker SPY --timeframe 1D --model mlp --smoke --smoke-sample-size 256 --smoke-epochs 1 --max-years 1 --out-dir artifacts
+```
+
+Each run writes a unique run directory containing:
+- model checkpoint
+- prediction artifact JSON
+- `train_metrics.json`
+
 ## Developer Commands
 
 ```bash
