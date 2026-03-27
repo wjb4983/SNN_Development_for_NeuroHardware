@@ -1,0 +1,21 @@
+task_name: direction_5m_distribution
+enabled: true
+type: classification
+horizon_minutes: 5
+labeling:
+  direction:
+    neutral_band_bps: 2.5
+    classes: [down, neutral, up]
+  distribution:
+    method: quantile_bins
+    bins: 5
+    fit_on: train_only
+evaluation:
+  confidence_threshold: 0.55
+  cost_model:
+    fee_bps: 1.0
+    spread_bps: 0.8
+    impact_coef: 0.15
+  ml_metrics: [auc, f1, logloss, brier, calibration]
+  trading_metrics: [net_pnl, sharpe, sortino, max_drawdown, turnover]
+  periods_per_year: 19656

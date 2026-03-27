@@ -1,0 +1,16 @@
+task_name: realized_vol_30m
+enabled: true
+type: regression
+horizon_minutes: 30
+labeling:
+  target:
+    method: next_window_realized_vol
+    window_minutes: 30
+evaluation:
+  confidence_threshold: 0.0
+  cost_model:
+    fee_bps: 0.0
+    spread_bps: 0.0
+    impact_coef: 0.0
+  ml_metrics: [mae, rmse, r2]
+  trading_metrics: []

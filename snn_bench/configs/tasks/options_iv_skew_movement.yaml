@@ -1,0 +1,17 @@
+task_name: options_iv_skew_movement
+enabled: false
+type: classification
+horizon_minutes: 30
+labeling:
+  source_feature: skew_proxy
+  movement_threshold: 0.01
+  classes: [down, neutral, up]
+evaluation:
+  confidence_threshold: 0.60
+  cost_model:
+    fee_bps: 1.0
+    spread_bps: 1.5
+    impact_coef: 0.3
+  ml_metrics: [auc, f1, logloss, brier, calibration]
+  trading_metrics: [net_pnl, sharpe, sortino, max_drawdown, turnover]
+  periods_per_year: 3276
