@@ -3,6 +3,18 @@ timeframe: 1D
 batch_size: 32
 epochs: 1
 seed: 7
+deterministic: true
+run_name: default
+model:
+  name: mlp
+  params:
+    epochs: 1
+    batch_size: 32
+    lr: 0.001
+smoke:
+  enabled: false
+  sample_size: 512
+  epochs: 1
 data_paths:
   snapshot_dir: src/data
   external_snapshot_dir: ../stoptions_analyzer/src/data

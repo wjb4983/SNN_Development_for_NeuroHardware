@@ -1,0 +1,12 @@
+ticker: SPY
+timeframe: 1D
+run_name: spy_smoke
+seed: 7
+model:
+  name: logreg
+  params:
+    max_iter: 150
+smoke:
+  enabled: true
+  sample_size: 256
+  epochs: 1

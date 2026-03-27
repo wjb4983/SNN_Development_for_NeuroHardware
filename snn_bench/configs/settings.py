@@ -12,6 +12,17 @@ class DataPaths(BaseModel):
     external_snapshot_dir: Path = Field(default=Path("../stoptions_analyzer/src/data"))
 
 
+class SmokeConfig(BaseModel):
+    enabled: bool = False
+    sample_size: int = 512
+    epochs: int = 1
+
+
+class ModelSelectionConfig(BaseModel):
+    name: str = "mlp"
+    params: dict = Field(default_factory=dict)
+
+
 class BenchmarkConfig(BaseModel):
     """Top-level benchmark configuration."""
 
@@ -23,5 +34,9 @@ class BenchmarkConfig(BaseModel):
     epochs: int = 1
     lr: float = 1e-3
     seed: int = 7
+    deterministic: bool = True
     massive_api_key_file: Path = Path("/etc/Massive/api-key")
+    run_name: str = "default"
+    model: ModelSelectionConfig = ModelSelectionConfig()
+    smoke: SmokeConfig = SmokeConfig()
     data_paths: DataPaths = DataPaths()
