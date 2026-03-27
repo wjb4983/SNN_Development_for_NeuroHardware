@@ -9,6 +9,7 @@ from .performance_realism import (
     next_window_realized_vol,
     quantile_distribution_labels,
 )
+from .registry import TaskRegistry, TaskSpec, assert_aligned_not_empty, validate_task_model_compatibility
 
 __all__ = [
     "BinaryDirectionDataset",
@@ -20,4 +21,8 @@ __all__ = [
     "next_window_realized_vol",
     "iv_skew_movement_labels",
     "assert_no_lookahead",
+    "TaskRegistry",
+    "TaskSpec",
+    "validate_task_model_compatibility",
+    "assert_aligned_not_empty",
 ]
