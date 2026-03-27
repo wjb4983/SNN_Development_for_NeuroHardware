@@ -288,10 +288,24 @@ class ModelZoo:
         raise ValueError(f"Unknown model: {spec.name}")
 
 
-def save_prediction_artifacts(out_dir: Path, model_name: str, y_true: np.ndarray, y_prob: np.ndarray) -> Path:
+def save_prediction_artifacts(
+    out_dir: Path,
+    model_name: str,
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    target_summary: dict[str, Any] | None = None,
+) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
+    summary = target_summary or {
+        "task_name": "next_bar_direction",
+        "horizon": "1_bar",
+        "label_type": "binary",
+        "classes": ["down_or_flat", "up"],
+        "label_semantics": "1 if next-bar close-to-close return > 0, else 0",
+    }
     payload = {
         "model": model_name,
+        "target_summary": summary,
         "y_true": y_true.astype(np.float32).tolist(),
         "y_prob": y_prob.astype(np.float32).tolist(),
     }

@@ -10,7 +10,7 @@ import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
 
-from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig
+from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
 from snn_bench.feature_pipelines.basic_features import BasicFeaturePipeline
@@ -68,13 +68,29 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dic
     y_prob = model.predict_proba(x_test)
     eval_metrics = model.evaluate(x_test, y_test)
 
-    run_id = f"{cfg.run_name}_{cfg.model.name}_{cfg.ticker}_{cfg.timeframe}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    task_meta = cfg.task.model_dump()
+    run_id = (
+        f"{cfg.run_name}_{cfg.model.name}_{cfg.task.name}_{cfg.task.horizon}_"
+        f"{cfg.ticker}_{cfg.timeframe}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    )
     run_dir = out_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = run_dir / f"{cfg.model.name}_checkpoint.bin"
     model.save_checkpoint(checkpoint)
-    pred_artifact = save_prediction_artifacts(run_dir, cfg.model.name, y_test, y_prob)
+    pred_artifact = save_prediction_artifacts(
+        run_dir,
+        cfg.model.name,
+        y_test,
+        y_prob,
+        target_summary={
+            "task_name": cfg.task.name,
+            "horizon": cfg.task.horizon,
+            "label_type": cfg.task.label_type,
+            "classes": cfg.task.classes,
+            "label_semantics": cfg.task.label_semantics,
+        },
+    )
 
     metrics = {
         "run_id": run_id,
@@ -90,6 +106,7 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dic
         "deterministic": cfg.deterministic,
         "model": cfg.model.name,
         "model_params": cfg.model.params,
+        "task": task_meta,
         "train_info": train_info,
         "eval": eval_metrics,
         "checkpoint": str(checkpoint),
@@ -134,6 +151,7 @@ def main() -> None:
             "run_name": args.run_name,
             "seed": args.seed,
             "model": ModelSelectionConfig(name=args.model, params={"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr}),
+            "task": TaskConfig(),
             "smoke": SmokeConfig(enabled=args.smoke, sample_size=args.smoke_sample_size, epochs=args.smoke_epochs),
             **cfg_data,
         }

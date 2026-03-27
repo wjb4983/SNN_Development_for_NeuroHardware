@@ -23,6 +23,16 @@ class ModelSelectionConfig(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class TaskConfig(BaseModel):
+    """Target/task metadata for training/evaluation outputs."""
+
+    name: str = "next_bar_direction"
+    horizon: str = "1_bar"
+    label_type: str = "binary"
+    classes: list[str] = Field(default_factory=lambda: ["down_or_flat", "up"])
+    label_semantics: str = "1 if next-bar close-to-close return > 0, else 0"
+
+
 class BenchmarkConfig(BaseModel):
     """Top-level benchmark configuration."""
 
@@ -38,5 +48,6 @@ class BenchmarkConfig(BaseModel):
     massive_api_key_file: Path = Path("/etc/Massive/api-key")
     run_name: str = "default"
     model: ModelSelectionConfig = ModelSelectionConfig()
+    task: TaskConfig = TaskConfig()
     smoke: SmokeConfig = SmokeConfig()
     data_paths: DataPaths = DataPaths()
