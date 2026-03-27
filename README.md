@@ -80,6 +80,15 @@ timeout 120s ./scripts/smoke_pipeline.sh AAPL 1D
 
 ## Start Training Models
 
+Default supervised target/task:
+- `task.name`: `next_bar_direction`
+- `task.horizon`: `1_bar` (predict next bar)
+- `task.label_type`: `binary`
+- `task.classes`: `["down_or_flat", "up"]`
+- Label semantics: `1 if next-bar close-to-close return > 0, else 0`
+
+To switch tasks, pass a YAML config with a `task` section (for example `task.name`, `task.horizon`, `task.label_type`, `task.classes`, `task.label_semantics`) via `--config`.
+
 ```bash
 timeout 120s ./scripts/train.sh AAPL 1D 5
 ```
@@ -194,6 +203,9 @@ Each run writes a unique run directory containing:
 - model checkpoint
 - prediction artifact JSON
 - `train_metrics.json`
+
+`train_metrics.json` now includes the full `task` metadata block, and prediction artifacts include `target_summary` with horizon + label semantics.  
+To change this metadata, define `task` in your config file and run `python -m snn_bench.scripts.train --config ...`.
 
 
 ## Config-Driven Multi-Experiment Training
