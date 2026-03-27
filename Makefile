@@ -3,7 +3,7 @@ PIP ?= pip
 IMAGE ?= snn-bench:latest
 API_KEY_FILE ?= /etc/Massive/api-key
 
-.PHONY: setup lint unit-test cache-data smoke-run train-run docker-build docker-cache docker-smoke docker-train
+.PHONY: setup lint unit-test cache-data smoke-run train-run docker-build docker-build-clean docker-cache docker-smoke docker-train
 
 setup:
 	timeout 180s $(PIP) install -e .
@@ -25,6 +25,9 @@ train-run:
 
 docker-build:
 	timeout 2400s docker build -t $(IMAGE) .
+
+docker-build-clean:
+	timeout 2400s docker build --no-cache -t $(IMAGE) .
 
 docker-cache:
 	timeout 1200s docker run --rm \

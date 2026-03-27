@@ -131,6 +131,19 @@ timeout 600s docker run --rm \
   snn-bench:latest python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 ```
 
+
+### Docker runtime fix for `GLIBCXX_3.4.31` / `optree` errors
+
+If you previously built an older image and hit:
+`ImportError: ... libstdc++.so.6: version GLIBCXX_3.4.31 not found`,
+rebuild from scratch to refresh runtime libs:
+
+```bash
+timeout 2400s docker build --no-cache -t snn-bench:latest .
+```
+
+This Dockerfile now provisions `libstdcxx-ng`/`libgcc-ng` in Conda and exports `LD_LIBRARY_PATH` to the Conda lib directory.
+
 ## Developer Commands
 
 ```bash
@@ -141,6 +154,7 @@ make cache-data
 make smoke-run
 make train-run
 make docker-build
+make docker-build-clean
 make docker-cache
 make docker-smoke
 make docker-train

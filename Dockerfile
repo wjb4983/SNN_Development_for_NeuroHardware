@@ -1,7 +1,9 @@
 FROM continuumio/miniconda3:24.7.1-0
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    CONDA_ENV_PATH=/opt/conda/envs/snnbench \
+    LD_LIBRARY_PATH=/opt/conda/envs/snnbench/lib:/opt/conda/lib
 
 WORKDIR /app
 
