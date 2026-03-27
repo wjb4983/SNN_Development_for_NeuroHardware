@@ -213,6 +213,9 @@ The post-train report generator creates:
 - `plots/calibration_plot.png`
 - `plots/probability_histogram.png`
 - `plots/equity_curve.png` when trading metrics are available in task evaluation config
+- `plots/next_bar_prediction_vs_outcome.png` when prediction artifacts include reference close and next-close prices (auto-included for `next_bar_direction` training runs)
+
+For next-bar tasks, `report.md` now also includes a compact efficacy block with directional hit-rate, signed confidence, and realized-move magnitude so test/eval runs visibly demonstrate prediction quality.
 
 `train_metrics.json` now includes the full `task` metadata block (including task `evaluation` config), and prediction artifacts include `target_summary` with horizon + label semantics.  
 To change this metadata, define `task` in your config file and run `python -m snn_bench.scripts.train --config ...`.
