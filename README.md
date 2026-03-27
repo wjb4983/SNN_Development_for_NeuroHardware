@@ -90,6 +90,22 @@ Direct command:
 timeout 120s python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
 ```
 
+## End-to-End Script (fetch → smoke → tests → train)
+
+Use the bundled shell script to run the full flow with explicit timeouts:
+
+```bash
+MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
+  timeout 2400s ./scripts/full_pipeline.sh AAPL 1D 5 5 2
+```
+
+Flags are positional: `ticker timeframe epochs stock_years option_years`.
+
+Optional environment toggles:
+- `INSTALL_DEPS=1` to run `pip install -e .` before pipeline execution
+- `RUN_TESTS=0` to skip unit tests
+- `OUT_DIR=artifacts_custom` to change training output path
+
 ## Run with Docker (prebuilt Conda env inside image)
 
 The image builds a full **Conda environment** (`snnbench`) with all required Python packages (including `numpy`), then executes commands inside that environment automatically.
