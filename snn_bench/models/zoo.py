@@ -13,6 +13,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 
+from snn_bench.models.backends import (
+    build_lava_model as build_lava_backend_model,
+    build_norse_model as build_norse_backend_model,
+    build_snntorch_model as build_snntorch_backend_model,
+    build_spikingjelly_model as build_spikingjelly_backend_model,
+)
 
 def set_global_seed(seed: int, deterministic: bool = True) -> None:
     random.seed(seed)
@@ -628,44 +634,91 @@ class _TemporalConvSpikingHead(torch.nn.Module):
         return self.spike_head(pooled)
 
 
-def _build_snntorch_model(input_dim: int, params: SNNParams, arch: str, use_native_lib: bool = False) -> torch.nn.Module:
-    if not use_native_lib:
-        if arch == "alif":
-            return _ALIFNet(input_dim=input_dim, params=params)
-        if arch in {"lsnn", "recurrent"}:
-            return _LSNNNet(input_dim=input_dim, params=params)
-        if arch in {"temporal_conv", "tcn_spike"}:
-            return _TemporalConvSpikingHead(input_dim=input_dim, params=params)
-        return _MultiLayerLIFNet(input_dim=input_dim, params=params)
-
-    try:
-        import snntorch as snn  # noqa: F401
-    except Exception:
-        return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
-    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
 
 
-def _build_norse_model(input_dim: int, params: SNNParams, arch: str) -> torch.nn.Module:
-    try:
-        import norse.torch as norse_torch  # noqa: F401
-    except Exception:
-        pass
-    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
+_BACKEND_ALIAS_BY_MODEL = {
+    "snntorch": "snntorch",
+    "snntorch_lif": "snntorch",
+    "snntorch_multilif": "snntorch",
+    "snntorch_alif": "snntorch",
+    "snntorch_adaptive": "snntorch",
+    "norse": "norse",
+    "norse_lif": "norse",
+    "norse_lsnn": "norse",
+    "norse_recurrent_lsnn": "norse",
+    "spikingjelly": "spikingjelly",
+    "spikingjelly_lif": "spikingjelly",
+    "spikingjelly_temporal_conv": "spikingjelly",
+    "lava": "lava",
+    "lava_lif": "lava",
+}
+
+_BACKEND_KEY_SPEC: dict[str, dict[str, set[str]]] = {
+    "snntorch": {
+        "allowed": {"surrogate_family", "reset_policy"},
+        "surrogate_family": {"tanh", "sigmoid", "fast_sigmoid"},
+        "reset_policy": {"zero", "subtract"},
+    },
+    "norse": {
+        "allowed": {"surrogate_family", "reset_policy", "recurrent_cell_type"},
+        "surrogate_family": {"tanh", "sigmoid", "fast_sigmoid"},
+        "reset_policy": {"zero", "subtract"},
+        "recurrent_cell_type": {"lif", "lsnn", "adex"},
+    },
+    "spikingjelly": {
+        "allowed": {"surrogate_family", "reset_policy", "event_encoding_mode"},
+        "surrogate_family": {"tanh", "sigmoid", "fast_sigmoid"},
+        "reset_policy": {"zero", "subtract"},
+        "event_encoding_mode": {"rate", "temporal", "delta"},
+    },
+    "lava": {
+        "allowed": {"reset_policy", "event_encoding_mode"},
+        "reset_policy": {"zero", "subtract"},
+        "event_encoding_mode": {"delta", "rate", "sparse"},
+    },
+}
 
 
-def _build_spikingjelly_model(input_dim: int, params: SNNParams, arch: str) -> torch.nn.Module:
-    try:
-        from spikingjelly.activation_based import layer, neuron  # noqa: F401
-    except Exception:
-        pass
-    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
+def _validate_and_merge_backend_params(model_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(params)
+    backend_name = _BACKEND_ALIAS_BY_MODEL.get(model_name.lower())
+    if backend_name is None:
+        return merged
+
+    backend_cfg = merged.get("backend", {})
+    if backend_cfg is None:
+        backend_cfg = {}
+    if not isinstance(backend_cfg, dict):
+        raise ValueError(f"backend config for {model_name} must be a mapping")
+
+    spec = _BACKEND_KEY_SPEC[backend_name]
+    unknown = sorted(set(backend_cfg) - spec["allowed"])
+    if unknown:
+        raise ValueError(f"Unsupported backend keys for {backend_name}: {unknown}")
+
+    for key, allowed_values in spec.items():
+        if key == "allowed" or key not in backend_cfg:
+            continue
+        if str(backend_cfg[key]) not in allowed_values:
+            allowed_fmt = ", ".join(sorted(allowed_values))
+            raise ValueError(f"Invalid {backend_name}.backend.{key}={backend_cfg[key]!r}; expected one of: {allowed_fmt}")
+
+    if "surrogate_family" in backend_cfg and "surrogate_type" not in merged:
+        merged["surrogate_type"] = backend_cfg["surrogate_family"]
+    if "reset_policy" in backend_cfg and "reset_mode" not in merged:
+        merged["reset_mode"] = backend_cfg["reset_policy"]
+    if backend_name == "norse" and "recurrent_cell_type" in backend_cfg and "arch" not in merged:
+        merged["arch"] = backend_cfg["recurrent_cell_type"]
+
+    merged["backend"] = backend_cfg
+    return merged
 
 
 class ModelZoo:
     @staticmethod
     def create(spec: ModelSpec, input_dim: int) -> UnifiedModel:
         n = spec.name.lower()
-        p = dict(spec.params)
+        p = _validate_and_merge_backend_params(spec.name, dict(spec.params))
 
         if n in {"logreg", "logistic_regression"}:
             return SklearnModelAdapter(
@@ -732,22 +785,33 @@ class ModelZoo:
                 class_balance_beta=class_balance_beta,
             )
 
-        if n in {"snntorch_lif", "snntorch", "snntorch_multilif"}:
-            model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch=arch, use_native_lib=bool(p.get("use_native_lib", False)))
-            return _make_torch_adapter(model)
+        backend_dispatch: dict[str, tuple[Any, str]] = {
+            "snntorch": (build_snntorch_backend_model, arch),
+            "snntorch_lif": (build_snntorch_backend_model, arch),
+            "snntorch_multilif": (build_snntorch_backend_model, arch),
+            "snntorch_alif": (build_snntorch_backend_model, "alif"),
+            "snntorch_adaptive": (build_snntorch_backend_model, "alif"),
+            "norse": (build_norse_backend_model, arch),
+            "norse_lif": (build_norse_backend_model, arch),
+            "norse_lsnn": (build_norse_backend_model, "lsnn"),
+            "norse_recurrent_lsnn": (build_norse_backend_model, "lsnn"),
+            "spikingjelly": (build_spikingjelly_backend_model, arch),
+            "spikingjelly_lif": (build_spikingjelly_backend_model, arch),
+            "spikingjelly_temporal_conv": (build_spikingjelly_backend_model, "temporal_conv"),
+            "lava": (build_lava_backend_model, arch),
+            "lava_lif": (build_lava_backend_model, arch),
+        }
 
-        if n in {"snntorch_alif", "snntorch_adaptive"}:
-            model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch="alif", use_native_lib=bool(p.get("use_native_lib", False)))
-            return _make_torch_adapter(model)
-
-        if n in {"norse_lif", "norse_lsnn", "norse", "norse_recurrent_lsnn"}:
-            model = _build_norse_model(input_dim=input_dim, params=snn_params, arch="lsnn" if "lsnn" in n else arch)
-            return _make_torch_adapter(model)
-
-        if n in {"spikingjelly_lif", "spikingjelly", "spikingjelly_temporal_conv"}:
-            use_arch = "temporal_conv" if "temporal" in n else arch
-            model = _build_spikingjelly_model(input_dim=input_dim, params=snn_params, arch=use_arch)
-            return _make_torch_adapter(model)
+        if n in backend_dispatch:
+            builder, backend_arch = backend_dispatch[n]
+            backend_model = builder(
+                input_dim=input_dim,
+                params=p,
+                arch=backend_arch,
+                task_spec={"name": n, "family": spec.family},
+                fallback_builder=lambda: _MultiLayerLIFNet(input_dim=input_dim, params=snn_params),
+            )
+            return _make_torch_adapter(backend_model)
 
         if n in {"tcn_spike", "temporal_conv_spike"}:
             model = _TemporalConvSpikingHead(input_dim=input_dim, params=snn_params)
