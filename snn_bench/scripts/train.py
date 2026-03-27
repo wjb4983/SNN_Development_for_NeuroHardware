@@ -123,14 +123,17 @@ def run_training(
     x, y = task_registry.build_dataset(frame, spec)
     assert_aligned_not_empty(x, y)
     x, y, epochs = _apply_smoke(cfg, x, y)
-    idx = np.arange(len(x), dtype=np.int64)
+    source_idx = np.arange(len(x), dtype=np.int64)
+    if spec.name == "next_bar_direction":
+        source_idx = np.arange(len(frame), dtype=np.int64)
+        source_idx = source_idx[: len(x)]
 
     strategy = str(cfg.model.params.get("training_strategy", "classification"))
     y_for_training = y.astype(np.float32) if strategy == "volatility_regression" else y.astype(np.int64)
     x_train, x_test, y_train, y_test, idx_train, idx_test = _split_dataset(
         x,
         y_for_training,
-        idx,
+        source_idx,
         seed=cfg.seed,
         split_mode=split_mode,
         test_size=0.2,
@@ -194,6 +197,10 @@ def run_training(
             "classes": cfg.task.classes,
             "label_semantics": cfg.task.label_semantics,
         },
+        reference_close=frame["c"].to_numpy(dtype=np.float32)[idx_test] if spec.name == "next_bar_direction" else None,
+        reference_next_close=(
+            frame["c"].shift(-1).to_numpy(dtype=np.float32)[idx_test] if spec.name == "next_bar_direction" else None
+        ),
     )
 
     metrics = {

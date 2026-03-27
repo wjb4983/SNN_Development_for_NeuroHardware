@@ -105,6 +105,58 @@ def _save_equity_curve(strategy_returns: np.ndarray, out_path: Path) -> None:
     plt.close(fig)
 
 
+def _save_next_bar_prediction_overlay(
+    reference_close: np.ndarray, reference_next_close: np.ndarray, y_true: np.ndarray, y_prob: np.ndarray, out_path: Path
+) -> dict[str, float]:
+    close = np.asarray(reference_close, dtype=np.float32)
+    next_close = np.asarray(reference_next_close, dtype=np.float32)
+    finite_mask = np.isfinite(close) & np.isfinite(next_close)
+    if not np.any(finite_mask):
+        raise ValueError("reference_close/reference_next_close must contain at least one finite value")
+
+    close = close[finite_mask]
+    next_close = next_close[finite_mask]
+    y_true = y_true[finite_mask]
+    y_prob = y_prob[finite_mask]
+
+    pred = (y_prob >= 0.5).astype(np.int64)
+    correct = pred == y_true
+    realized_return = np.where(close != 0, (next_close - close) / close, 0.0)
+    signed_confidence = np.where(pred == 1, y_prob, 1.0 - y_prob)
+    hit_rate = float(np.mean(correct))
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    x = np.arange(len(close))
+    ax.plot(x, next_close, color="#0f766e", linewidth=1.8, label="Realized next close")
+    ax.plot(x, close, color="#64748b", linewidth=1.0, alpha=0.8, label="Current close")
+
+    ax.scatter(x[correct], next_close[correct], color="#16a34a", s=26, alpha=0.8, label="Correct prediction")
+    ax.scatter(x[~correct], next_close[~correct], color="#dc2626", s=26, alpha=0.8, label="Incorrect prediction")
+    ax.set_title("Next-Bar Prediction vs. Realized Price")
+    ax.set_xlabel("Evaluation sample")
+    ax.set_ylabel("Price")
+    ax.grid(alpha=0.2)
+    ax.legend(loc="best")
+    ax.text(
+        0.01,
+        0.98,
+        f"Hit rate: {hit_rate:.2%}\nMean |confidence|: {float(np.mean(signed_confidence)):.2f}",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.75},
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return {
+        "hit_rate": hit_rate,
+        "avg_signed_confidence": float(np.mean(signed_confidence)),
+        "avg_abs_realized_return": float(np.mean(np.abs(realized_return))),
+    }
+
+
 def generate_run_report(run_dir: Path | str) -> Path:
     run_path = Path(run_dir)
     metrics_path = run_path / "train_metrics.json"
@@ -129,6 +181,7 @@ def generate_run_report(run_dir: Path | str) -> Path:
     _ensure_dir(plots_dir)
 
     generated_plots: list[Path] = []
+    efficacy_metrics: dict[str, float] | None = None
 
     conf_path = plots_dir / "confusion_matrix.png"
     _save_confusion_matrix(y_true, y_prob, conf_path)
@@ -161,6 +214,19 @@ def generate_run_report(run_dir: Path | str) -> Path:
         _save_equity_curve(strategy_returns, equity_path)
         generated_plots.append(equity_path)
 
+    reference_close = np.asarray(predictions.get("reference_close", []), dtype=np.float32)
+    reference_next_close = np.asarray(predictions.get("reference_next_close", []), dtype=np.float32)
+    if reference_close.size == y_true.size and reference_next_close.size == y_true.size:
+        next_bar_plot_path = plots_dir / "next_bar_prediction_vs_outcome.png"
+        efficacy_metrics = _save_next_bar_prediction_overlay(
+            reference_close=reference_close,
+            reference_next_close=reference_next_close,
+            y_true=y_true,
+            y_prob=y_prob,
+            out_path=next_bar_plot_path,
+        )
+        generated_plots.append(next_bar_plot_path)
+
     report_lines = [
         f"# Run report: {train_metrics.get('run_id', run_path.name)}",
         "",
@@ -170,9 +236,25 @@ def generate_run_report(run_dir: Path | str) -> Path:
         json.dumps(train_metrics.get("eval", {}), indent=2),
         "```",
         "",
+    ]
+    if efficacy_metrics:
+        report_lines.extend(
+            [
+                "## Next-bar efficacy snapshot",
+                "",
+                f"- Directional hit rate: **{efficacy_metrics['hit_rate']:.2%}**",
+                f"- Mean signed confidence: **{efficacy_metrics['avg_signed_confidence']:.3f}**",
+                f"- Mean absolute realized return: **{efficacy_metrics['avg_abs_realized_return']:.5f}**",
+                "",
+            ]
+        )
+
+    report_lines.extend(
+        [
         "## Visualizations",
         "",
-    ]
+        ]
+    )
 
     for plot in generated_plots:
         rel = plot.relative_to(run_path)

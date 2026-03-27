@@ -762,6 +762,8 @@ def save_prediction_artifacts(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     target_summary: dict[str, Any] | None = None,
+    reference_close: np.ndarray | None = None,
+    reference_next_close: np.ndarray | None = None,
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     summary = target_summary or {
@@ -777,6 +779,10 @@ def save_prediction_artifacts(
         "y_true": y_true.astype(np.float32).tolist(),
         "y_prob": y_prob.astype(np.float32).tolist(),
     }
+    if reference_close is not None:
+        payload["reference_close"] = reference_close.astype(np.float32).tolist()
+    if reference_next_close is not None:
+        payload["reference_next_close"] = reference_next_close.astype(np.float32).tolist()
     path = out_dir / f"{model_name}_predictions.json"
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
