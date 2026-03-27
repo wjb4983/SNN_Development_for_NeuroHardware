@@ -9,6 +9,8 @@ import numpy as np
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import PrecisionRecallDisplay, RocCurveDisplay, confusion_matrix
 
+from snn_bench.eval.metrics import bio_plausibility_metrics
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -227,6 +229,8 @@ def generate_run_report(run_dir: Path | str) -> Path:
         )
         generated_plots.append(next_bar_plot_path)
 
+    bio_metrics = bio_plausibility_metrics(y_prob, dt_ms=1.0, threshold=0.5, stability_window=8)
+
     report_lines = [
         f"# Run report: {train_metrics.get('run_id', run_path.name)}",
         "",
@@ -251,8 +255,15 @@ def generate_run_report(run_dir: Path | str) -> Path:
 
     report_lines.extend(
         [
-        "## Visualizations",
-        "",
+            "## Bio-plausibility hooks",
+            "",
+            f"- Spike sparsity: **{bio_metrics['spike_sparsity']:.3f}**",
+            f"- Firing-rate mean/std (Hz): **{bio_metrics['firing_rate_distribution']['mean_hz']:.2f} / {bio_metrics['firing_rate_distribution']['std_hz']:.2f}**",
+            f"- Temporal precision score: **{bio_metrics['temporal_precision']:.3f}**",
+            f"- Stability drift/std: **{bio_metrics['stability']['firing_rate_drift']:.4f} / {bio_metrics['stability']['rolling_rate_std']:.4f}**",
+            "",
+            "## Visualizations",
+            "",
         ]
     )
 

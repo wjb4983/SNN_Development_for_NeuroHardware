@@ -1,0 +1,171 @@
+model_family: bio_plausible
+schema_version: 1
+
+required_fields:
+  - neuron_model
+  - tau_m
+  - tau_syn
+  - refractory_steps
+  - stdp_rule
+  - tau_pre
+  - tau_post
+  - eligibility_tau
+  - homeostasis_rate_target_hz
+
+parameter_schema:
+  neuron_model:
+    type: enum
+    allowed: [lif, alif, adex_like]
+  tau_m:
+    type: float
+    units: ms
+    range: [5.0, 80.0]
+  tau_syn:
+    type: float
+    units: ms
+    range: [2.0, 40.0]
+  refractory_steps:
+    type: int
+    units: steps
+    range: [0, 10]
+  v_th:
+    type: float
+    default: 1.0
+  v_reset:
+    type: float
+    default: 0.0
+  adaptation_tau:
+    type: float
+    units: ms
+    range: [20.0, 300.0]
+  adaptation_strength:
+    type: float
+    range: [0.0, 0.5]
+  adex_delta_t:
+    type: float
+    range: [0.05, 0.5]
+  adex_exp_scale:
+    type: float
+    range: [0.0, 0.2]
+
+  stdp_rule:
+    type: enum
+    allowed: [pair, triplet, reward_modulated]
+  tau_pre:
+    type: float
+    units: ms
+  tau_post:
+    type: float
+    units: ms
+  tau_pre_long:
+    type: float
+    units: ms
+  tau_post_long:
+    type: float
+    units: ms
+  a_plus:
+    type: float
+    range: [0.0, 0.1]
+  a_minus:
+    type: float
+    range: [0.0, 0.1]
+  reward_scale:
+    type: float
+    range: [0.0, 2.0]
+  reward_signal:
+    type: float
+    range: [-1.0, 1.0]
+
+  eligibility_tau:
+    type: float
+    units: ms
+    range: [20.0, 500.0]
+  synaptic_delay_steps:
+    type: int
+    range: [0, 8]
+  conductance_based:
+    type: bool
+  e_exc:
+    type: float
+    default: 1.2
+
+  homeostasis_rate_target_hz:
+    type: float
+    range: [1.0, 40.0]
+  homeostasis_reg_strength:
+    type: float
+    range: [0.0, 0.05]
+  threshold_adaptation_rate:
+    type: float
+    range: [0.0, 0.1]
+
+variants:
+  lif_pair_stdp:
+    model:
+      name: bio_plausible_lif
+      params:
+        hidden_sizes: [64]
+        output_dim: 1
+        neuron_model: lif
+        tau_m: 20.0
+        tau_syn: 8.0
+        refractory_steps: 2
+        stdp_rule: pair
+        tau_pre: 20.0
+        tau_post: 20.0
+        eligibility_tau: 120.0
+        synaptic_delay_steps: 1
+        conductance_based: false
+        homeostasis_rate_target_hz: 8.0
+        homeostasis_reg_strength: 0.002
+        threshold_adaptation_rate: 0.01
+
+  alif_triplet_stdp:
+    model:
+      name: bio_plausible_alif
+      params:
+        hidden_sizes: [72]
+        output_dim: 1
+        neuron_model: alif
+        tau_m: 24.0
+        tau_syn: 10.0
+        refractory_steps: 2
+        adaptation_tau: 150.0
+        adaptation_strength: 0.08
+        stdp_rule: triplet
+        tau_pre: 20.0
+        tau_post: 20.0
+        tau_pre_long: 90.0
+        tau_post_long: 90.0
+        eligibility_tau: 160.0
+        synaptic_delay_steps: 2
+        conductance_based: true
+        homeostasis_rate_target_hz: 10.0
+        homeostasis_reg_strength: 0.003
+        threshold_adaptation_rate: 0.015
+
+  adex_reward_modulated:
+    model:
+      name: bio_plausible_adex
+      params:
+        hidden_sizes: [80]
+        output_dim: 1
+        neuron_model: adex_like
+        tau_m: 30.0
+        tau_syn: 12.0
+        refractory_steps: 3
+        adaptation_tau: 200.0
+        adaptation_strength: 0.06
+        adex_delta_t: 0.2
+        adex_exp_scale: 0.05
+        stdp_rule: reward_modulated
+        tau_pre: 18.0
+        tau_post: 24.0
+        reward_scale: 0.7
+        reward_signal: 0.15
+        eligibility_tau: 180.0
+        synaptic_delay_steps: 2
+        conductance_based: true
+        homeostasis_rate_target_hz: 9.0
+        homeostasis_reg_strength: 0.003
+        threshold_adaptation_rate: 0.02
