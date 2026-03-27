@@ -1,0 +1,62 @@
+defaults:
+  ticker: AAPL
+  timeframe: 1D
+  seed: 7
+  deterministic: true
+  smoke:
+    enabled: true
+    sample_size: 256
+    epochs: 1
+
+runs:
+  - name: aapl_snntorch_multilif_depth2
+    epochs: 2
+    batch_size: 32
+    model:
+      name: snntorch_lif
+      params:
+        hidden_sizes: [64, 32]
+        depth: 2
+        dropout: 0.1
+        surrogate_type: tanh
+        reset_mode: zero
+        lr: 0.001
+
+  - name: aapl_snntorch_alif
+    epochs: 2
+    batch_size: 32
+    model:
+      name: snntorch_alif
+      params:
+        hidden_sizes: [48]
+        depth: 1
+        dropout: 0.05
+        surrogate_type: sigmoid
+        reset_mode: subtract
+        lr: 0.001
+
+  - name: aapl_norse_recurrent_lsnn
+    epochs: 2
+    batch_size: 32
+    model:
+      name: norse_recurrent_lsnn
+      params:
+        hidden_sizes: [40]
+        depth: 1
+        dropout: 0.0
+        surrogate_type: fast_sigmoid
+        reset_mode: zero
+        lr: 0.001
+
+  - name: aapl_spikingjelly_temporal_conv
+    epochs: 2
+    batch_size: 32
+    model:
+      name: spikingjelly_temporal_conv
+      params:
+        hidden_sizes: [32]
+        depth: 1
+        dropout: 0.1
+        surrogate_type: tanh
+        reset_mode: zero
+        lr: 0.001

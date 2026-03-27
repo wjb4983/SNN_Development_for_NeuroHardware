@@ -33,6 +33,16 @@ class ModelSpec:
     params: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class SNNParams:
+    hidden_sizes: list[int]
+    depth: int
+    dropout: float
+    surrogate_type: str
+    reset_mode: str
+    beta: float
+
+
 class UnifiedModel:
     """Shared API for model training/evaluation across baseline + SNN backends."""
 
@@ -43,6 +53,9 @@ class UnifiedModel:
         raise NotImplementedError
 
     def save_checkpoint(self, path: Path) -> None:
+        raise NotImplementedError
+
+    def load_checkpoint(self, path: Path) -> None:
         raise NotImplementedError
 
     def evaluate(self, x: np.ndarray, y: np.ndarray) -> dict[str, float]:
@@ -64,19 +77,25 @@ class SklearnModelAdapter(UnifiedModel):
         self.estimator = estimator
 
     def fit(self, x_train: np.ndarray, y_train: np.ndarray, **kwargs: Any) -> dict[str, Any]:
-        self.estimator.fit(x_train, y_train)
+        self.estimator.fit(_flatten_temporal_np(x_train), y_train)
         return {"train_samples": int(len(x_train))}
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        x_flat = _flatten_temporal_np(x)
         if hasattr(self.estimator, "predict_proba"):
-            return self.estimator.predict_proba(x)[:, 1].astype(np.float32)
-        logits = self.estimator.decision_function(x)
+            return self.estimator.predict_proba(x_flat)[:, 1].astype(np.float32)
+        logits = self.estimator.decision_function(x_flat)
         return (1.0 / (1.0 + np.exp(-logits))).astype(np.float32)
 
     def save_checkpoint(self, path: Path) -> None:
         import joblib
 
         joblib.dump(self.estimator, path)
+
+    def load_checkpoint(self, path: Path) -> None:
+        import joblib
+
+        self.estimator = joblib.load(path)
 
 
 class TorchSNNAdapter(UnifiedModel):
@@ -129,85 +148,197 @@ class TorchSNNAdapter(UnifiedModel):
     def save_checkpoint(self, path: Path) -> None:
         torch.save(self.model.state_dict(), path)
 
+    def load_checkpoint(self, path: Path) -> None:
+        self.model.load_state_dict(torch.load(path, map_location="cpu"))
 
-class _SimpleLIFNet(torch.nn.Module):
-    """Fallback lightweight pseudo-LIF implementation."""
 
-    def __init__(self, input_dim: int, hidden_dim: int = 32, beta: float = 0.9) -> None:
+def _flatten_temporal_np(x: np.ndarray) -> np.ndarray:
+    if x.ndim == 3:
+        b, t, f = x.shape
+        return x.reshape(b, t * f)
+    return x
+
+
+def _normalize_snn_params(params: dict[str, Any]) -> SNNParams:
+    hidden_sizes = params.get("hidden_sizes")
+    if hidden_sizes is None:
+        hidden_dim = int(params.get("hidden_dim", 32))
+        depth = int(params.get("depth", 2))
+        hidden_sizes = [hidden_dim for _ in range(max(1, depth))]
+    hidden_sizes = [int(v) for v in hidden_sizes]
+    depth = int(params.get("depth", len(hidden_sizes)))
+    if len(hidden_sizes) < depth:
+        hidden_sizes = hidden_sizes + [hidden_sizes[-1]] * (depth - len(hidden_sizes))
+    elif len(hidden_sizes) > depth:
+        hidden_sizes = hidden_sizes[:depth]
+
+    return SNNParams(
+        hidden_sizes=hidden_sizes,
+        depth=depth,
+        dropout=float(params.get("dropout", 0.0)),
+        surrogate_type=str(params.get("surrogate_type", "tanh")),
+        reset_mode=str(params.get("reset_mode", "zero")),
+        beta=float(params.get("beta", 0.9)),
+    )
+
+
+def _surrogate_spike(x: torch.Tensor, surrogate_type: str) -> torch.Tensor:
+    if surrogate_type == "sigmoid":
+        gate = torch.sigmoid(5.0 * x)
+    elif surrogate_type == "fast_sigmoid":
+        gate = x / (1.0 + torch.abs(x))
+        gate = 0.5 * (gate + 1.0)
+    else:
+        gate = 0.5 * (torch.tanh(2.0 * x) + 1.0)
+    hard = (x > 0).float()
+    return hard.detach() - gate.detach() + gate
+
+
+class _MultiLayerLIFNet(torch.nn.Module):
+    def __init__(self, input_dim: int, params: SNNParams) -> None:
         super().__init__()
-        self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
-        self.fc2 = torch.nn.Linear(hidden_dim, 1)
-        self.beta = beta
+        self.layers = torch.nn.ModuleList()
+        self.dropouts = torch.nn.ModuleList()
+        prev = input_dim
+        for h in params.hidden_sizes:
+            self.layers.append(torch.nn.Linear(prev, h))
+            self.dropouts.append(torch.nn.Dropout(params.dropout))
+            prev = h
+        self.out = torch.nn.Linear(prev, 1)
+        self.beta = params.beta
+        self.surrogate_type = params.surrogate_type
+        self.reset_mode = params.reset_mode
+
+    def _step(self, x: torch.Tensor) -> torch.Tensor:
+        h = x
+        for layer, do in zip(self.layers, self.dropouts):
+            mem = layer(h)
+            spk = _surrogate_spike(self.beta * mem, self.surrogate_type)
+            h = do(spk)
+        return self.out(h)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        mem = self.fc1(x)
-        spk = (torch.tanh(mem * self.beta) > 0).float()
-        return self.fc2(spk)
+        if x.ndim == 3:
+            outs = [self._step(x[:, t, :]) for t in range(x.shape[1])]
+            return torch.stack(outs, dim=1).mean(dim=1)
+        return self._step(x)
 
 
-def _build_snntorch_model(input_dim: int, hidden_dim: int, use_native_lib: bool = False) -> torch.nn.Module:
+class _ALIFNet(torch.nn.Module):
+    def __init__(self, input_dim: int, params: SNNParams) -> None:
+        super().__init__()
+        self.fc_in = torch.nn.Linear(input_dim, params.hidden_sizes[0])
+        self.fc_out = torch.nn.Linear(params.hidden_sizes[0], 1)
+        self.dropout = torch.nn.Dropout(params.dropout)
+        self.beta = params.beta
+        self.adapt_rate = 0.1
+        self.surrogate_type = params.surrogate_type
+        self.reset_mode = params.reset_mode
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 2:
+            x = x.unsqueeze(1)
+        batch, steps, _ = x.shape
+        adapt = torch.zeros(batch, self.fc_in.out_features, device=x.device)
+        mem = torch.zeros_like(adapt)
+        outputs: list[torch.Tensor] = []
+        for t in range(steps):
+            mem = self.beta * mem + self.fc_in(x[:, t, :]) - adapt
+            spk = _surrogate_spike(mem, self.surrogate_type)
+            adapt = adapt + self.adapt_rate * spk
+            if self.reset_mode == "subtract":
+                mem = mem - spk
+            else:
+                mem = mem * (1.0 - spk)
+            outputs.append(self.fc_out(self.dropout(spk)))
+        return torch.stack(outputs, dim=1).mean(dim=1)
+
+
+class _LSNNNet(torch.nn.Module):
+    def __init__(self, input_dim: int, params: SNNParams) -> None:
+        super().__init__()
+        h = params.hidden_sizes[0]
+        self.in_proj = torch.nn.Linear(input_dim, h)
+        self.rec_proj = torch.nn.Linear(h, h)
+        self.out_proj = torch.nn.Linear(h, 1)
+        self.dropout = torch.nn.Dropout(params.dropout)
+        self.beta = params.beta
+        self.surrogate_type = params.surrogate_type
+        self.reset_mode = params.reset_mode
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 2:
+            x = x.unsqueeze(1)
+        batch, steps, _ = x.shape
+        h = torch.zeros(batch, self.rec_proj.in_features, device=x.device)
+        mem = torch.zeros_like(h)
+        outputs: list[torch.Tensor] = []
+        for t in range(steps):
+            mem = self.beta * mem + self.in_proj(x[:, t, :]) + self.rec_proj(h)
+            spk = _surrogate_spike(mem, self.surrogate_type)
+            h = self.dropout(spk)
+            if self.reset_mode == "subtract":
+                mem = mem - spk
+            else:
+                mem = mem * (1.0 - spk)
+            outputs.append(self.out_proj(h))
+        return torch.stack(outputs, dim=1).mean(dim=1)
+
+
+class _TemporalConvSpikingHead(torch.nn.Module):
+    def __init__(self, input_dim: int, params: SNNParams) -> None:
+        super().__init__()
+        c = params.hidden_sizes[0]
+        self.tcn = torch.nn.Sequential(
+            torch.nn.Conv1d(input_dim, c, kernel_size=3, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.Conv1d(c, c, kernel_size=3, padding=1),
+            torch.nn.ReLU(),
+        )
+        self.spike_head = torch.nn.Linear(c, 1)
+        self.dropout = torch.nn.Dropout(params.dropout)
+        self.surrogate_type = params.surrogate_type
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 2:
+            x = x.unsqueeze(1)
+        feat = self.tcn(x.transpose(1, 2)).transpose(1, 2)
+        spikes = _surrogate_spike(feat, self.surrogate_type)
+        pooled = self.dropout(spikes.mean(dim=1))
+        return self.spike_head(pooled)
+
+
+def _build_snntorch_model(input_dim: int, params: SNNParams, arch: str, use_native_lib: bool = False) -> torch.nn.Module:
     if not use_native_lib:
-        return _SimpleLIFNet(input_dim=input_dim, hidden_dim=hidden_dim)
+        if arch == "alif":
+            return _ALIFNet(input_dim=input_dim, params=params)
+        if arch in {"lsnn", "recurrent"}:
+            return _LSNNNet(input_dim=input_dim, params=params)
+        if arch in {"temporal_conv", "tcn_spike"}:
+            return _TemporalConvSpikingHead(input_dim=input_dim, params=params)
+        return _MultiLayerLIFNet(input_dim=input_dim, params=params)
+
     try:
-        import snntorch as snn
+        import snntorch as snn  # noqa: F401
     except Exception:
-        return _SimpleLIFNet(input_dim=input_dim, hidden_dim=hidden_dim)
-
-    class SnnTorchNet(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
-            self.lif1 = snn.Leaky(beta=0.95, init_hidden=False)
-            self.fc2 = torch.nn.Linear(hidden_dim, 1)
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            cur1 = self.fc1(x)
-            spk1, _ = self.lif1(cur1, None)
-            return self.fc2(spk1)
-
-    return SnnTorchNet()
+        return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
+    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
 
 
-def _build_norse_model(input_dim: int, hidden_dim: int) -> torch.nn.Module:
+def _build_norse_model(input_dim: int, params: SNNParams, arch: str) -> torch.nn.Module:
     try:
-        import norse.torch as norse_torch
+        import norse.torch as norse_torch  # noqa: F401
     except Exception:
-        return _SimpleLIFNet(input_dim=input_dim, hidden_dim=hidden_dim)
-
-    class NorseNet(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
-            self.lif = norse_torch.LIFCell()
-            self.fc2 = torch.nn.Linear(hidden_dim, 1)
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            z = self.fc1(x)
-            spk, _ = self.lif(z)
-            return self.fc2(spk)
-
-    return NorseNet()
+        pass
+    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
 
 
-def _build_spikingjelly_model(input_dim: int, hidden_dim: int) -> torch.nn.Module:
+def _build_spikingjelly_model(input_dim: int, params: SNNParams, arch: str) -> torch.nn.Module:
     try:
-        from spikingjelly.activation_based import layer, neuron
+        from spikingjelly.activation_based import layer, neuron  # noqa: F401
     except Exception:
-        return _SimpleLIFNet(input_dim=input_dim, hidden_dim=hidden_dim)
-
-    class SpikingJellyNet(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.net = torch.nn.Sequential(
-                layer.Linear(input_dim, hidden_dim),
-                neuron.LIFNode(tau=2.0),
-                layer.Linear(hidden_dim, 1),
-            )
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return self.net(x)
-
-    return SpikingJellyNet()
+        pass
+    return _build_snntorch_model(input_dim=input_dim, params=params, arch=arch, use_native_lib=False)
 
 
 class ModelZoo:
@@ -258,32 +389,29 @@ class ModelZoo:
                 )
             )
 
-        if n in {"snntorch_lif", "snntorch"}:
-            model = _build_snntorch_model(input_dim=input_dim, hidden_dim=int(p.get("hidden_dim", 32)), use_native_lib=bool(p.get("use_native_lib", False)))
-            return TorchSNNAdapter(
-                model,
-                lr=float(p.get("lr", 1e-3)),
-                epochs=int(p.get("epochs", 5)),
-                batch_size=int(p.get("batch_size", 64)),
-            )
+        snn_params = _normalize_snn_params(p)
+        arch = str(p.get("arch", "lif"))
 
-        if n in {"norse_lif", "norse_lsnn", "norse"}:
-            model = _build_norse_model(input_dim=input_dim, hidden_dim=int(p.get("hidden_dim", 32)))
-            return TorchSNNAdapter(
-                model,
-                lr=float(p.get("lr", 1e-3)),
-                epochs=int(p.get("epochs", 5)),
-                batch_size=int(p.get("batch_size", 64)),
-            )
+        if n in {"snntorch_lif", "snntorch", "snntorch_multilif"}:
+            model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch=arch, use_native_lib=bool(p.get("use_native_lib", False)))
+            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
 
-        if n in {"spikingjelly_lif", "spikingjelly"}:
-            model = _build_spikingjelly_model(input_dim=input_dim, hidden_dim=int(p.get("hidden_dim", 32)))
-            return TorchSNNAdapter(
-                model,
-                lr=float(p.get("lr", 1e-3)),
-                epochs=int(p.get("epochs", 5)),
-                batch_size=int(p.get("batch_size", 64)),
-            )
+        if n in {"snntorch_alif", "snntorch_adaptive"}:
+            model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch="alif", use_native_lib=bool(p.get("use_native_lib", False)))
+            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+
+        if n in {"norse_lif", "norse_lsnn", "norse", "norse_recurrent_lsnn"}:
+            model = _build_norse_model(input_dim=input_dim, params=snn_params, arch="lsnn" if "lsnn" in n else arch)
+            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+
+        if n in {"spikingjelly_lif", "spikingjelly", "spikingjelly_temporal_conv"}:
+            use_arch = "temporal_conv" if "temporal" in n else arch
+            model = _build_spikingjelly_model(input_dim=input_dim, params=snn_params, arch=use_arch)
+            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+
+        if n in {"tcn_spike", "temporal_conv_spike"}:
+            model = _TemporalConvSpikingHead(input_dim=input_dim, params=snn_params)
+            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
 
         raise ValueError(f"Unknown model: {spec.name}")
 
