@@ -27,6 +27,8 @@ If your local `python` is missing dependencies (for example `PyYAML`), the wrapp
 1. Conda env `snnbench` (if present), then
 2. Docker image `snn-bench:latest` (if present).
 
+When Docker is used, `MASSIVE_API_KEY_FILE` is now mounted into the container automatically if the file exists on the host.
+
 ## 3) Common toggles
 
 ```bash

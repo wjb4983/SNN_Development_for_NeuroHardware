@@ -49,10 +49,20 @@ resolve_python_cmd() {
 run_experiment_module() {
   if [[ "$PYTHON_MODE" == "docker" ]]; then
     mkdir -p "$OUT_DIR"
+
+    local key_mount=()
+    local key_path="${MASSIVE_API_KEY_FILE:-/etc/Massive/api-key}"
+    if [[ -f "$key_path" ]]; then
+      key_mount=( -v "$key_path:$key_path:ro" )
+    elif [[ -n "${MASSIVE_API_KEY_FILE:-}" ]]; then
+      echo "[warn] MASSIVE_API_KEY_FILE is set but file was not found on host: $key_path"
+    fi
+
     timeout 1200s docker run --rm \
       -e MASSIVE_API_KEY="${MASSIVE_API_KEY:-}" \
-      -e MASSIVE_API_KEY_FILE="${MASSIVE_API_KEY_FILE:-/etc/Massive/api-key}" \
+      -e MASSIVE_API_KEY_FILE="$key_path" \
       -v "$PWD:/app" \
+      "${key_mount[@]}" \
       -w /app \
       "$DOCKER_IMAGE" \
       python -m snn_bench.scripts.run_experiments \

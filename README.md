@@ -221,6 +221,8 @@ Useful environment overrides:
 
 If local `python` is missing dependencies like `PyYAML`, `run_experiments.sh` auto-falls back to conda env `snnbench` or Docker image `snn-bench:latest` when available.
 
+When Docker is used, `MASSIVE_API_KEY_FILE` is now mounted into the container automatically if the file exists on the host.
+
 See `TRAINING_EXPERIMENTS.md` for the full workflow.
 
 ## Developer Commands
