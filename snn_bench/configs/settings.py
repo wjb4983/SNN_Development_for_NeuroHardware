@@ -37,6 +37,8 @@ class BenchmarkConfig(BaseModel):
     """Top-level benchmark configuration."""
 
     ticker: str = "AAPL"
+    task_name: str | None = None
+    task_config: Path | None = None
     timeframe: str = "1D"
     start_year: int | None = None
     end_year: int | None = None

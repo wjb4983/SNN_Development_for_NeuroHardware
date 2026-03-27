@@ -13,8 +13,8 @@ from sklearn.model_selection import train_test_split
 from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
-from snn_bench.feature_pipelines.basic_features import BasicFeaturePipeline
 from snn_bench.models import ModelSpec, ModelZoo, save_prediction_artifacts, set_global_seed
+from snn_bench.tasks.registry import TaskRegistry, assert_aligned_not_empty, validate_task_model_compatibility
 from snn_bench.utils.secrets import load_massive_api_key
 
 
@@ -36,7 +36,14 @@ def _apply_smoke(cfg: BenchmarkConfig, x: np.ndarray, y: np.ndarray) -> tuple[np
     return x[:limit], y[:limit], int(cfg.smoke.epochs)
 
 
-def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dict:
+def run_training(
+    cfg: BenchmarkConfig,
+    out_dir: Path,
+    max_years: int = 0,
+    *,
+    task_name: str | None = None,
+    task_config: Path | None = None,
+) -> dict:
     set_global_seed(cfg.seed, deterministic=cfg.deterministic)
     load_massive_api_key(cfg.massive_api_key_file)
 
@@ -49,16 +56,22 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dic
     frames = [bars.load_year(cfg.ticker, cfg.timeframe, y) for y in selected_years]
     frame = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
 
-    x, y = BasicFeaturePipeline().transform(frame)
+    task_registry = TaskRegistry()
+    spec = task_registry.resolve(task_name=task_name, task_config=task_config)
+    validate_task_model_compatibility(spec, cfg.model.name)
+
+    x, y = task_registry.build_dataset(frame, spec)
+    assert_aligned_not_empty(x, y)
     x, y, epochs = _apply_smoke(cfg, x, y)
 
+    y_int = y.astype(np.int64)
     x_train, x_test, y_train, y_test = train_test_split(
         x,
-        y.astype(np.int64),
+        y_int,
         test_size=0.2,
         random_state=cfg.seed,
         shuffle=True,
-        stratify=y.astype(np.int64) if len(np.unique(y)) > 1 else None,
+        stratify=y_int if len(np.unique(y_int)) > 1 else None,
     )
 
     model_spec = ModelSpec(name=cfg.model.name, family="zoo", params={**cfg.model.params, "seed": cfg.seed})
@@ -68,9 +81,16 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dic
     y_prob = model.predict_proba(x_test)
     eval_metrics = model.evaluate(x_test, y_test)
 
-    task_meta = cfg.task.model_dump()
+    task_meta = {
+        "name": spec.name,
+        "horizon": cfg.task.horizon,
+        "label_type": cfg.task.label_type,
+        "classes": cfg.task.classes,
+        "label_semantics": cfg.task.label_semantics,
+        "task_config": str(spec.path),
+    }
     run_id = (
-        f"{cfg.run_name}_{cfg.model.name}_{cfg.task.name}_{cfg.task.horizon}_"
+        f"{cfg.run_name}_{cfg.model.name}_{spec.name}_{cfg.task.horizon}_"
         f"{cfg.ticker}_{cfg.timeframe}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     )
     run_dir = out_dir / run_id
@@ -84,7 +104,7 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dic
         y_test,
         y_prob,
         target_summary={
-            "task_name": cfg.task.name,
+            "task_name": spec.name,
             "horizon": cfg.task.horizon,
             "label_type": cfg.task.label_type,
             "classes": cfg.task.classes,
@@ -132,6 +152,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smoke-sample-size", type=int, default=256)
     parser.add_argument("--smoke-epochs", type=int, default=1)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--task-name", default=None, help="Task name from task YAML, e.g. direction_5m_distribution")
+    parser.add_argument("--task-config", type=Path, default=None, help="Path to task YAML config")
     return parser.parse_args()
 
 
@@ -150,6 +172,8 @@ def main() -> None:
             "lr": args.lr,
             "run_name": args.run_name,
             "seed": args.seed,
+            "task_name": args.task_name,
+            "task_config": str(args.task_config) if args.task_config else None,
             "model": ModelSelectionConfig(name=args.model, params={"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr}),
             "task": TaskConfig(),
             "smoke": SmokeConfig(enabled=args.smoke, sample_size=args.smoke_sample_size, epochs=args.smoke_epochs),
@@ -157,7 +181,16 @@ def main() -> None:
         }
     )
 
-    metrics = run_training(cfg, Path(args.out_dir), max_years=args.max_years)
+    effective_task_name = cfg.task_name or args.task_name
+    effective_task_config = Path(cfg.task_config) if cfg.task_config else args.task_config
+
+    metrics = run_training(
+        cfg,
+        Path(args.out_dir),
+        max_years=args.max_years,
+        task_name=effective_task_name,
+        task_config=effective_task_config,
+    )
     print(json.dumps(metrics, indent=2))
 
 
