@@ -1,0 +1,24 @@
+name: snnbench
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.11
+  - pip
+  - libstdcxx-ng>=13
+  - libgcc-ng>=13
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - plotly
+  - pyyaml
+  - tqdm
+  - rich
+  - pydantic
+  - pytorch
+  - pip:
+      - -r requirements.txt
+      - -e .

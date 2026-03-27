@@ -1,0 +1,8 @@
+.git
+__pycache__/
+*.py[cod]
+*.ipynb
+.venv/
+.env
+artifacts/
+tests/

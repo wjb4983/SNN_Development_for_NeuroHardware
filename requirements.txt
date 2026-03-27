@@ -1,0 +1,16 @@
+numpy>=1.26
+pandas>=2.2
+pydantic>=2.7
+scipy>=1.12
+torch>=2.2
+pytorch-lightning>=2.2
+snntorch>=0.8
+norse>=1.0.0
+spikingjelly>=0.0.0.0.14
+scikit-learn>=1.4
+statsmodels>=0.14
+matplotlib>=3.8
+plotly>=5.20
+pyyaml>=6.0
+rich>=13.7
+tqdm>=4.66
