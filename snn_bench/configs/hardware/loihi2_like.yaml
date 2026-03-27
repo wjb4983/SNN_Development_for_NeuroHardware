@@ -1,0 +1,10 @@
+name: loihi2_like
+description: Loihi2-inspired constraints for planning SNN deployment.
+max_fan_in: 4096
+max_fan_out: 4096
+weight_precision_bits: 8
+state_precision_bits: 16
+max_neurons_per_layer: 8192
+max_layers: 64
+max_timesteps: 512
+supported_ops: [linear, conv1d, lif, alif, readout]

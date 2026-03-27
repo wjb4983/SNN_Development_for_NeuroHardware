@@ -1,0 +1,10 @@
+name: generic_edge_neuromorphic
+description: Conservative edge neuromorphic profile for low-power deployment.
+max_fan_in: 512
+max_fan_out: 512
+weight_precision_bits: 6
+state_precision_bits: 8
+max_neurons_per_layer: 2048
+max_layers: 16
+max_timesteps: 128
+supported_ops: [linear, lif, readout]

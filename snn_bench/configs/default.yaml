@@ -19,3 +19,8 @@ data_paths:
   snapshot_dir: src/data
   external_snapshot_dir: ../stoptions_analyzer/src/data
   backtest_root: src/data/backtest_cache
+hardware:
+  target_profile: loihi2_like
+  quantization: 8
+  max_neurons_per_layer: 2048
+  supported_ops: [linear, lif, readout]
