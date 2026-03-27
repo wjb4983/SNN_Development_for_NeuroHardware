@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
@@ -18,21 +19,23 @@ from snn_bench.trainers.basic_trainer import BasicTrainer
 from snn_bench.utils.secrets import load_massive_api_key
 
 
-def _first_year(index_blob: dict) -> int:
+def _available_years(index_blob: dict) -> list[int]:
     years = index_blob.get("years") or []
     if not years:
         raise ValueError("index.json does not contain years")
-    return int(sorted(years)[0])
+    return sorted(int(y) for y in years)
 
 
-def run_training(cfg: BenchmarkConfig, out_dir: Path) -> dict:
+def run_training(cfg: BenchmarkConfig, out_dir: Path, max_years: int = 0) -> dict:
     load_massive_api_key(cfg.massive_api_key_file)
     snapshot = SnapshotCacheConnector(cfg.data_paths.snapshot_dir, cfg.data_paths.external_snapshot_dir)
     bars = BacktestBarStoreConnector(cfg.data_paths.backtest_root)
 
     rows_snapshot = len(snapshot.load_frame(cfg.ticker))
-    year = _first_year(bars.load_index(cfg.ticker, cfg.timeframe))
-    frame = bars.load_year(cfg.ticker, cfg.timeframe, year)
+    years = _available_years(bars.load_index(cfg.ticker, cfg.timeframe))
+    selected_years = years if max_years <= 0 else years[:max_years]
+    frames = [bars.load_year(cfg.ticker, cfg.timeframe, y) for y in selected_years]
+    frame = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
     x, y = BasicFeaturePipeline().transform(frame)
 
     dataset = BinaryDirectionDataset(x, y)
@@ -55,7 +58,7 @@ def run_training(cfg: BenchmarkConfig, out_dir: Path) -> dict:
     metrics = {
         "ticker": cfg.ticker,
         "timeframe": cfg.timeframe,
-        "year": year,
+        "years": selected_years,
         "rows_snapshot": rows_snapshot,
         "rows_train": int(len(dataset)),
         "epochs": cfg.epochs,
@@ -75,6 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--out-dir", default="artifacts")
+    parser.add_argument("--max-years", type=int, default=0, help="0=all available years; otherwise use earliest N years")
     return parser.parse_args()
 
 
@@ -87,7 +91,7 @@ def main() -> None:
         batch_size=args.batch_size,
         lr=args.lr,
     )
-    metrics = run_training(cfg, Path(args.out_dir))
+    metrics = run_training(cfg, Path(args.out_dir), max_years=args.max_years)
     print(json.dumps(metrics, indent=2))
 
 
