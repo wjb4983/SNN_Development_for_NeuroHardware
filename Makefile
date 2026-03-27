@@ -3,7 +3,7 @@ PIP ?= pip
 IMAGE ?= snn-bench:latest
 API_KEY_FILE ?= /etc/Massive/api-key
 
-.PHONY: setup lint unit-test cache-data smoke-run train-run docker-build docker-build-clean docker-cache docker-smoke docker-train
+.PHONY: setup lint unit-test cache-data smoke-run train-run experiment-run docker-build docker-build-clean docker-cache docker-smoke docker-train
 
 setup:
 	timeout 180s $(PIP) install -e .
@@ -22,6 +22,10 @@ smoke-run:
 
 train-run:
 	timeout 120s $(PYTHON) -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
+
+
+experiment-run:
+	timeout 1200s ./scripts/run_experiments.sh snn_bench/configs/experiments/aapl_model_sweep.yaml
 
 docker-build:
 	timeout 2400s docker build -t $(IMAGE) .
