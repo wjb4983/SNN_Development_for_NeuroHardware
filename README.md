@@ -102,9 +102,15 @@ MASSIVE_API_KEY_FILE=/etc/Massive/api-key \
 Flags are positional: `ticker timeframe epochs stock_years option_years`.
 
 Optional environment toggles:
-- `INSTALL_DEPS=1` to run `pip install -e .` before pipeline execution
+- `INSTALL_DEPS=1` to run `pip install -e .` before pipeline execution (local mode)
 - `RUN_TESTS=0` to skip unit tests
 - `OUT_DIR=artifacts_custom` to change training output path
+- `USE_DOCKER=1` to force all python steps to run in `snn-bench:latest`
+- `DOCKER_IMAGE=custom:tag` to override image name in docker mode
+
+If local Python is missing core packages (for example `numpy`), the script auto-falls back to:
+1) Conda env `snnbench` (if available), then
+2) Docker image `snn-bench:latest` (if available).
 
 ## Run with Docker (prebuilt Conda env inside image)
 
