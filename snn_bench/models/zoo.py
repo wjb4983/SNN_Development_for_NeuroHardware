@@ -41,6 +41,163 @@ class SNNParams:
     surrogate_type: str
     reset_mode: str
     beta: float
+    output_dim: int
+
+
+@dataclass(slots=True)
+class TrainingDiagnostics:
+    epoch: int
+    train_loss: float
+    val_loss: float | None
+    calibration_proxy: float
+    class_balance_proxy: float
+
+
+class TrainingStrategy:
+    def __init__(self, *, output_dim: int = 1, loss_name: str = "default", label_smoothing: float = 0.0, class_balance_beta: float = 0.999) -> None:
+        self.output_dim = output_dim
+        self.loss_name = loss_name
+        self.label_smoothing = max(0.0, min(0.4, label_smoothing))
+        self.class_balance_beta = class_balance_beta
+
+    def build_target(self, yb: torch.Tensor) -> torch.Tensor:
+        return yb
+
+    def loss(self, logits: torch.Tensor, targets: torch.Tensor, *, y_all: np.ndarray | None = None) -> torch.Tensor:
+        raise NotImplementedError
+
+    def predict(self, logits: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
+    def diagnostics(self, probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, float]:
+        raise NotImplementedError
+
+
+class BinaryClassificationStrategy(TrainingStrategy):
+    def loss(self, logits: torch.Tensor, targets: torch.Tensor, *, y_all: np.ndarray | None = None) -> torch.Tensor:
+        targets = targets.float()
+        if self.label_smoothing > 0:
+            targets = (1.0 - self.label_smoothing) * targets + 0.5 * self.label_smoothing
+        if self.loss_name == "focal":
+            return _binary_focal_loss(logits, targets)
+        if self.loss_name == "class_balanced" and y_all is not None:
+            counts = np.bincount(y_all.astype(np.int64), minlength=2).astype(np.float32)
+            pos_weight = _class_balanced_weights(counts, beta=self.class_balance_beta)[1]
+            return torch.nn.functional.binary_cross_entropy_with_logits(logits, targets, pos_weight=torch.tensor(pos_weight, dtype=logits.dtype, device=logits.device))
+        return torch.nn.functional.binary_cross_entropy_with_logits(logits, targets)
+
+    def predict(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(logits)
+
+    def diagnostics(self, probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, float]:
+        calibration = float(torch.mean(torch.abs(probs - targets.float())).item())
+        class_balance = float(torch.mean((probs >= 0.5).float()).item())
+        return calibration, class_balance
+
+
+class MulticlassClassificationStrategy(TrainingStrategy):
+    def build_target(self, yb: torch.Tensor) -> torch.Tensor:
+        return yb.long()
+
+    def loss(self, logits: torch.Tensor, targets: torch.Tensor, *, y_all: np.ndarray | None = None) -> torch.Tensor:
+        if self.loss_name == "focal":
+            return _multiclass_focal_loss(logits, targets)
+        if self.loss_name == "class_balanced" and y_all is not None:
+            counts = np.bincount(y_all.astype(np.int64), minlength=self.output_dim).astype(np.float32)
+            weights = torch.tensor(_class_balanced_weights(counts, beta=self.class_balance_beta), dtype=logits.dtype, device=logits.device)
+            return torch.nn.functional.cross_entropy(logits, targets, weight=weights, label_smoothing=self.label_smoothing)
+        return torch.nn.functional.cross_entropy(logits, targets, label_smoothing=self.label_smoothing)
+
+    def predict(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.softmax(logits, dim=-1)
+
+    def diagnostics(self, probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, float]:
+        picked = probs.gather(1, targets.view(-1, 1)).squeeze(1)
+        calibration = float(torch.mean(torch.abs(1.0 - picked)).item())
+        class_balance = float(torch.std(probs.mean(dim=0), unbiased=False).item())
+        return calibration, class_balance
+
+
+class VolatilityRegressionStrategy(TrainingStrategy):
+    def loss(self, logits: torch.Tensor, targets: torch.Tensor, *, y_all: np.ndarray | None = None) -> torch.Tensor:
+        targets = targets.float()
+        if self.loss_name == "huber":
+            return torch.nn.functional.huber_loss(logits, targets, delta=1.0)
+        return torch.nn.functional.mse_loss(logits, targets)
+
+    def predict(self, logits: torch.Tensor) -> torch.Tensor:
+        return torch.relu(logits)
+
+    def diagnostics(self, probs: torch.Tensor, targets: torch.Tensor) -> tuple[float, float]:
+        calibration = float(torch.mean(torch.abs(probs - targets.float())).item())
+        class_balance = float(torch.std(probs, unbiased=False).item())
+        return calibration, class_balance
+
+
+def _class_balanced_weights(counts: np.ndarray, beta: float = 0.999) -> np.ndarray:
+    effective_num = 1.0 - np.power(beta, np.maximum(counts, 1.0))
+    weights = (1.0 - beta) / np.maximum(effective_num, 1e-8)
+    return weights / np.mean(weights)
+
+
+def _binary_focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float = 2.0, alpha: float = 0.25) -> torch.Tensor:
+    bce = torch.nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    probs = torch.sigmoid(logits)
+    pt = torch.where(targets > 0.5, probs, 1.0 - probs)
+    alpha_t = torch.where(targets > 0.5, alpha, 1.0 - alpha)
+    loss = alpha_t * ((1.0 - pt) ** gamma) * bce
+    return loss.mean()
+
+
+def _multiclass_focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float = 2.0) -> torch.Tensor:
+    ce = torch.nn.functional.cross_entropy(logits, targets, reduction="none")
+    pt = torch.exp(-ce)
+    return (((1.0 - pt) ** gamma) * ce).mean()
+
+
+def _auxiliary_objective_loss(inputs: torch.Tensor, logits: torch.Tensor, *, objective: str) -> torch.Tensor:
+    if objective == "reconstruction":
+        if inputs.ndim == 3:
+            target = inputs.mean(dim=1)
+        else:
+            target = inputs
+        if logits.ndim == 1:
+            logits = logits.unsqueeze(1)
+        expanded = logits
+        if logits.shape[-1] != target.shape[-1]:
+            repeat = int(np.ceil(target.shape[-1] / max(1, logits.shape[-1])))
+            expanded = logits.repeat(1, repeat)[:, : target.shape[-1]]
+        return torch.nn.functional.mse_loss(expanded, target)
+    if objective == "contrastive":
+        flat = inputs.reshape(inputs.shape[0], -1)
+        norm_feat = torch.nn.functional.normalize(flat, dim=-1)
+        norm_logits = torch.nn.functional.normalize(logits.reshape(logits.shape[0], -1), dim=-1)
+        sim = torch.sum(norm_feat[:, : norm_logits.shape[1]] * norm_logits, dim=-1)
+        return 1.0 - sim.mean()
+    return torch.tensor(0.0, device=inputs.device, dtype=inputs.dtype)
+
+
+def _select_training_strategy(strategy_name: str, *, output_dim: int, loss_name: str, label_smoothing: float, class_balance_beta: float) -> TrainingStrategy:
+    if strategy_name in {"multiclass", "ordinal"} or output_dim > 1:
+        return MulticlassClassificationStrategy(
+            output_dim=output_dim,
+            loss_name=loss_name,
+            label_smoothing=label_smoothing,
+            class_balance_beta=class_balance_beta,
+        )
+    if strategy_name in {"volatility_regression", "regression"}:
+        return VolatilityRegressionStrategy(
+            output_dim=1,
+            loss_name=loss_name,
+            label_smoothing=0.0,
+            class_balance_beta=class_balance_beta,
+        )
+    return BinaryClassificationStrategy(
+        output_dim=1,
+        loss_name=loss_name,
+        label_smoothing=label_smoothing,
+        class_balance_beta=class_balance_beta,
+    )
 
 
 class UnifiedModel:
@@ -60,15 +217,25 @@ class UnifiedModel:
 
     def evaluate(self, x: np.ndarray, y: np.ndarray) -> dict[str, float]:
         proba = self.predict_proba(x)
-        pred = (proba >= 0.5).astype(np.int64)
-        metrics: dict[str, float] = {
-            "accuracy": float(accuracy_score(y, pred)),
-            "f1": float(f1_score(y, pred, zero_division=0)),
-        }
-        if len(np.unique(y)) > 1:
-            metrics["roc_auc"] = float(roc_auc_score(y, proba))
+        if proba.ndim == 2 and proba.shape[1] > 1:
+            pred = np.argmax(proba, axis=1).astype(np.int64)
+            metrics = {
+                "accuracy": float(accuracy_score(y, pred)),
+                "f1_macro": float(f1_score(y, pred, average="macro", zero_division=0)),
+            }
+        elif np.issubdtype(y.dtype, np.floating):
+            mse = float(np.mean((proba.reshape(-1) - y.reshape(-1)) ** 2))
+            metrics = {"mse": mse, "rmse": float(np.sqrt(mse))}
         else:
-            metrics["roc_auc"] = 0.5
+            pred = (proba >= 0.5).astype(np.int64)
+            metrics = {
+                "accuracy": float(accuracy_score(y, pred)),
+                "f1": float(f1_score(y, pred, zero_division=0)),
+            }
+            if len(np.unique(y)) > 1:
+                metrics["roc_auc"] = float(roc_auc_score(y, proba))
+            else:
+                metrics["roc_auc"] = 0.5
         return metrics
 
 
@@ -99,51 +266,173 @@ class SklearnModelAdapter(UnifiedModel):
 
 
 class TorchSNNAdapter(UnifiedModel):
-    def __init__(self, model: torch.nn.Module, lr: float = 1e-3, epochs: int = 5, batch_size: int = 64) -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        lr: float = 1e-3,
+        epochs: int = 5,
+        batch_size: int = 64,
+        *,
+        output_dim: int = 1,
+        strategy: str = "classification",
+        loss_name: str = "default",
+        label_smoothing: float = 0.0,
+        class_balance_beta: float = 0.999,
+    ) -> None:
         self.model = model
         self.lr = lr
         self.epochs = epochs
         self.batch_size = batch_size
-        self.loss_fn = torch.nn.BCEWithLogitsLoss()
+        self.output_dim = output_dim
+        self.strategy_name = strategy
+        self.training_strategy = _select_training_strategy(
+            strategy_name=strategy,
+            output_dim=output_dim,
+            loss_name=loss_name,
+            label_smoothing=label_smoothing,
+            class_balance_beta=class_balance_beta,
+        )
         self.optim = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
     def fit(self, x_train: np.ndarray, y_train: np.ndarray, **kwargs: Any) -> dict[str, Any]:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(device)
+        epochs = int(kwargs.get("epochs", self.epochs))
+        batch_size = int(kwargs.get("batch_size", self.batch_size))
+        val_split = float(kwargs.get("val_split", 0.1))
+        early_stopping_patience = int(kwargs.get("early_stopping_patience", 0))
+        grad_clip_norm = float(kwargs.get("grad_clip_norm", 0.0))
+        scheduler_name = str(kwargs.get("scheduler", "none")).lower()
+        use_amp = bool(kwargs.get("mixed_precision", False) and device.type == "cuda")
+        aux_objective = str(kwargs.get("aux_objective", "none")).lower()
+        aux_weight = float(kwargs.get("aux_weight", 0.0))
+
         x_tensor = torch.tensor(x_train, dtype=torch.float32)
-        y_tensor = torch.tensor(y_train, dtype=torch.float32)
-        ds = torch.utils.data.TensorDataset(x_tensor, y_tensor)
-        loader = torch.utils.data.DataLoader(ds, batch_size=self.batch_size, shuffle=True)
-        losses: list[float] = []
+        target_dtype = torch.float32 if isinstance(self.training_strategy, (BinaryClassificationStrategy, VolatilityRegressionStrategy)) else torch.long
+        y_tensor = torch.tensor(y_train, dtype=target_dtype)
+
+        train_len = len(x_tensor)
+        val_len = int(train_len * val_split) if val_split > 0 else 0
+        if val_len >= train_len:
+            val_len = max(0, train_len - 1)
+        if val_len > 0:
+            perm = torch.randperm(train_len)
+            val_idx = perm[:val_len]
+            train_idx = perm[val_len:]
+            train_ds = torch.utils.data.TensorDataset(x_tensor[train_idx], y_tensor[train_idx])
+            val_ds = torch.utils.data.TensorDataset(x_tensor[val_idx], y_tensor[val_idx])
+        else:
+            train_ds = torch.utils.data.TensorDataset(x_tensor, y_tensor)
+            val_ds = None
+
+        loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False) if val_ds is not None else None
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+        if scheduler_name == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optim, T_max=max(1, epochs))
+        elif scheduler_name in {"one_cycle", "onecycle"}:
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optim, max_lr=self.lr, epochs=max(1, epochs), steps_per_epoch=max(1, len(loader)))
+
+        history: list[dict[str, float]] = []
+        best_val = float("inf")
+        stale_epochs = 0
+
         self.model.train()
-        for _ in range(int(kwargs.get("epochs", self.epochs))):
+        for epoch in range(epochs):
+            epoch_losses: list[float] = []
+            epoch_probs: list[torch.Tensor] = []
+            epoch_targets: list[torch.Tensor] = []
             for xb, yb in loader:
-                logits = self.model(xb).squeeze(-1)
-                loss = self.loss_fn(logits, yb)
+                xb = xb.to(device)
+                yb = yb.to(device)
+                self.optim.zero_grad(set_to_none=True)
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    logits = self.model(xb)
+                    logits = logits.squeeze(-1) if self.output_dim == 1 else logits
+                    targets = self.training_strategy.build_target(yb)
+                    base_loss = self.training_strategy.loss(logits, targets, y_all=y_train)
+                    aux_loss = _auxiliary_objective_loss(xb, logits, objective=aux_objective)
+                    loss = base_loss + aux_weight * aux_loss
                 try:
                     from spikingjelly.activation_based import functional as sj_functional
 
                     sj_functional.reset_net(self.model)
                 except Exception:
                     pass
-                self.optim.zero_grad()
-                loss.backward()
-                self.optim.step()
-                losses.append(float(loss.item()))
+                scaler.scale(loss).backward()
+                scaler.unscale_(self.optim)
+                if grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
+                scaler.step(self.optim)
+                scaler.update()
+                if scheduler_name in {"one_cycle", "onecycle"} and scheduler is not None:
+                    scheduler.step()
+                epoch_losses.append(float(loss.item()))
+                epoch_probs.append(self.training_strategy.predict(logits.detach()).cpu())
+                epoch_targets.append(targets.detach().cpu())
+
+            train_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+            train_probs = torch.cat(epoch_probs) if epoch_probs else torch.zeros(1)
+            train_targets = torch.cat(epoch_targets) if epoch_targets else torch.zeros(1)
+            calibration, class_balance = self.training_strategy.diagnostics(train_probs, train_targets)
+
+            val_loss = None
+            if val_loader is not None:
+                self.model.eval()
+                val_losses: list[float] = []
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        xb = xb.to(device)
+                        yb = yb.to(device)
+                        logits = self.model(xb)
+                        logits = logits.squeeze(-1) if self.output_dim == 1 else logits
+                        targets = self.training_strategy.build_target(yb)
+                        val_losses.append(float(self.training_strategy.loss(logits, targets, y_all=y_train).item()))
+                self.model.train()
+                val_loss = float(np.mean(val_losses)) if val_losses else None
+
+            history.append(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "calibration_proxy": calibration,
+                    "class_balance_proxy": class_balance,
+                }
+            )
+            if scheduler_name == "cosine" and scheduler is not None:
+                scheduler.step()
+            if val_loss is not None and early_stopping_patience > 0:
+                if val_loss < best_val:
+                    best_val = val_loss
+                    stale_epochs = 0
+                else:
+                    stale_epochs += 1
+                    if stale_epochs >= early_stopping_patience:
+                        break
+
         return {
-            "loss_last": float(losses[-1]) if losses else 0.0,
-            "epochs": int(kwargs.get("epochs", self.epochs)),
+            "loss_last": float(history[-1]["train_loss"]) if history else 0.0,
+            "epochs": len(history),
+            "diagnostics": history,
         }
 
     @torch.no_grad()
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        device = next(self.model.parameters()).device
         self.model.eval()
-        logits = self.model(torch.tensor(x, dtype=torch.float32)).squeeze(-1)
+        logits = self.model(torch.tensor(x, dtype=torch.float32, device=device))
+        logits = logits.squeeze(-1) if self.output_dim == 1 else logits
         try:
             from spikingjelly.activation_based import functional as sj_functional
 
             sj_functional.reset_net(self.model)
         except Exception:
             pass
-        return torch.sigmoid(logits).cpu().numpy().astype(np.float32)
+        probs = self.training_strategy.predict(logits)
+        return probs.cpu().numpy().astype(np.float32)
 
     def save_checkpoint(self, path: Path) -> None:
         torch.save(self.model.state_dict(), path)
@@ -179,6 +468,7 @@ def _normalize_snn_params(params: dict[str, Any]) -> SNNParams:
         surrogate_type=str(params.get("surrogate_type", "tanh")),
         reset_mode=str(params.get("reset_mode", "zero")),
         beta=float(params.get("beta", 0.9)),
+        output_dim=max(1, int(params.get("output_dim", params.get("num_classes", 1)))),
     )
 
 
@@ -204,7 +494,7 @@ class _MultiLayerLIFNet(torch.nn.Module):
             self.layers.append(torch.nn.Linear(prev, h))
             self.dropouts.append(torch.nn.Dropout(params.dropout))
             prev = h
-        self.out = torch.nn.Linear(prev, 1)
+        self.out = torch.nn.Linear(prev, params.output_dim)
         self.beta = params.beta
         self.surrogate_type = params.surrogate_type
         self.reset_mode = params.reset_mode
@@ -228,7 +518,7 @@ class _ALIFNet(torch.nn.Module):
     def __init__(self, input_dim: int, params: SNNParams) -> None:
         super().__init__()
         self.fc_in = torch.nn.Linear(input_dim, params.hidden_sizes[0])
-        self.fc_out = torch.nn.Linear(params.hidden_sizes[0], 1)
+        self.fc_out = torch.nn.Linear(params.hidden_sizes[0], params.output_dim)
         self.dropout = torch.nn.Dropout(params.dropout)
         self.beta = params.beta
         self.adapt_rate = 0.1
@@ -260,7 +550,7 @@ class _LSNNNet(torch.nn.Module):
         h = params.hidden_sizes[0]
         self.in_proj = torch.nn.Linear(input_dim, h)
         self.rec_proj = torch.nn.Linear(h, h)
-        self.out_proj = torch.nn.Linear(h, 1)
+        self.out_proj = torch.nn.Linear(h, params.output_dim)
         self.dropout = torch.nn.Dropout(params.dropout)
         self.beta = params.beta
         self.surrogate_type = params.surrogate_type
@@ -295,7 +585,7 @@ class _TemporalConvSpikingHead(torch.nn.Module):
             torch.nn.Conv1d(c, c, kernel_size=3, padding=1),
             torch.nn.ReLU(),
         )
-        self.spike_head = torch.nn.Linear(c, 1)
+        self.spike_head = torch.nn.Linear(c, params.output_dim)
         self.dropout = torch.nn.Dropout(params.dropout)
         self.surrogate_type = params.surrogate_type
 
@@ -391,27 +681,44 @@ class ModelZoo:
 
         snn_params = _normalize_snn_params(p)
         arch = str(p.get("arch", "lif"))
+        strategy = str(p.get("training_strategy", "classification"))
+        loss_name = str(p.get("loss", "default"))
+        label_smoothing = float(p.get("label_smoothing", 0.0))
+        class_balance_beta = float(p.get("class_balance_beta", 0.999))
+
+        def _make_torch_adapter(model: torch.nn.Module) -> TorchSNNAdapter:
+            return TorchSNNAdapter(
+                model,
+                lr=float(p.get("lr", 1e-3)),
+                epochs=int(p.get("epochs", 5)),
+                batch_size=int(p.get("batch_size", 64)),
+                output_dim=snn_params.output_dim,
+                strategy=strategy,
+                loss_name=loss_name,
+                label_smoothing=label_smoothing,
+                class_balance_beta=class_balance_beta,
+            )
 
         if n in {"snntorch_lif", "snntorch", "snntorch_multilif"}:
             model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch=arch, use_native_lib=bool(p.get("use_native_lib", False)))
-            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+            return _make_torch_adapter(model)
 
         if n in {"snntorch_alif", "snntorch_adaptive"}:
             model = _build_snntorch_model(input_dim=input_dim, params=snn_params, arch="alif", use_native_lib=bool(p.get("use_native_lib", False)))
-            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+            return _make_torch_adapter(model)
 
         if n in {"norse_lif", "norse_lsnn", "norse", "norse_recurrent_lsnn"}:
             model = _build_norse_model(input_dim=input_dim, params=snn_params, arch="lsnn" if "lsnn" in n else arch)
-            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+            return _make_torch_adapter(model)
 
         if n in {"spikingjelly_lif", "spikingjelly", "spikingjelly_temporal_conv"}:
             use_arch = "temporal_conv" if "temporal" in n else arch
             model = _build_spikingjelly_model(input_dim=input_dim, params=snn_params, arch=use_arch)
-            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+            return _make_torch_adapter(model)
 
         if n in {"tcn_spike", "temporal_conv_spike"}:
             model = _TemporalConvSpikingHead(input_dim=input_dim, params=snn_params)
-            return TorchSNNAdapter(model, lr=float(p.get("lr", 1e-3)), epochs=int(p.get("epochs", 5)), batch_size=int(p.get("batch_size", 64)))
+            return _make_torch_adapter(model)
 
         raise ValueError(f"Unknown model: {spec.name}")
 

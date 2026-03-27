@@ -37,6 +37,32 @@ def _apply_smoke(cfg: BenchmarkConfig, x: np.ndarray, y: np.ndarray) -> tuple[np
     return x[:limit], y[:limit], int(cfg.smoke.epochs)
 
 
+def _split_dataset(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    seed: int,
+    split_mode: str = "random",
+    test_size: float = 0.2,
+    walk_forward_ratio: float = 0.8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if split_mode == "walk_forward":
+        cut = int(len(x) * walk_forward_ratio)
+        cut = min(max(1, cut), len(x) - 1)
+        return x[:cut], x[cut:], y[:cut], y[cut:]
+    if np.issubdtype(y.dtype, np.floating):
+        return train_test_split(x, y, test_size=test_size, random_state=seed, shuffle=True)
+    y_int = y.astype(np.int64)
+    return train_test_split(
+        x,
+        y_int,
+        test_size=test_size,
+        random_state=seed,
+        shuffle=True,
+        stratify=y_int if len(np.unique(y_int)) > 1 else None,
+    )
+
+
 def run_training(
     cfg: BenchmarkConfig,
     out_dir: Path,
@@ -44,6 +70,8 @@ def run_training(
     *,
     task_name: str | None = None,
     task_config: Path | None = None,
+    split_mode: str = "random",
+    walk_forward_ratio: float = 0.8,
 ) -> dict:
     set_global_seed(cfg.seed, deterministic=cfg.deterministic)
     load_massive_api_key(cfg.massive_api_key_file)
@@ -65,19 +93,31 @@ def run_training(
     assert_aligned_not_empty(x, y)
     x, y, epochs = _apply_smoke(cfg, x, y)
 
-    y_int = y.astype(np.int64)
-    x_train, x_test, y_train, y_test = train_test_split(
+    strategy = str(cfg.model.params.get("training_strategy", "classification"))
+    y_for_training = y.astype(np.float32) if strategy == "volatility_regression" else y.astype(np.int64)
+    x_train, x_test, y_train, y_test = _split_dataset(
         x,
-        y_int,
+        y_for_training,
+        seed=cfg.seed,
+        split_mode=split_mode,
         test_size=0.2,
-        random_state=cfg.seed,
-        shuffle=True,
-        stratify=y_int if len(np.unique(y_int)) > 1 else None,
+        walk_forward_ratio=walk_forward_ratio,
     )
 
     model_spec = ModelSpec(name=cfg.model.name, family="zoo", params={**cfg.model.params, "seed": cfg.seed})
     model = ModelZoo.create(model_spec, input_dim=x_train.shape[1])
-    train_info = model.fit(x_train, y_train, epochs=epochs)
+    train_info = model.fit(
+        x_train,
+        y_train,
+        epochs=epochs,
+        scheduler=str(cfg.model.params.get("scheduler", "none")),
+        grad_clip_norm=float(cfg.model.params.get("grad_clip_norm", 0.0)),
+        early_stopping_patience=int(cfg.model.params.get("early_stopping_patience", 0)),
+        mixed_precision=bool(cfg.model.params.get("mixed_precision", False)),
+        aux_objective=str(cfg.model.params.get("aux_objective", "none")),
+        aux_weight=float(cfg.model.params.get("aux_weight", 0.0)),
+        val_split=float(cfg.model.params.get("val_split", 0.1)),
+    )
 
     y_prob = model.predict_proba(x_test)
     eval_metrics = model.evaluate(x_test, y_test)
@@ -123,6 +163,8 @@ def run_training(
         "rows_train_total": int(len(x)),
         "rows_train": int(len(x_train)),
         "rows_eval": int(len(x_test)),
+        "split_mode": split_mode,
+        "walk_forward_ratio": walk_forward_ratio if split_mode == "walk_forward" else None,
         "epochs": epochs,
         "seed": cfg.seed,
         "deterministic": cfg.deterministic,
@@ -166,6 +208,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--task-name", default=None, help="Task name from task YAML, e.g. direction_5m_distribution")
     parser.add_argument("--task-config", type=Path, default=None, help="Path to task YAML config")
+    parser.add_argument("--split-mode", choices=["random", "walk_forward"], default="random")
+    parser.add_argument("--walk-forward-ratio", type=float, default=0.8, help="Train ratio for walk-forward split mode")
+    parser.add_argument("--scheduler", choices=["none", "cosine", "one_cycle"], default="none")
+    parser.add_argument("--grad-clip-norm", type=float, default=0.0)
+    parser.add_argument("--early-stopping-patience", type=int, default=0)
+    parser.add_argument("--mixed-precision", action="store_true")
+    parser.add_argument("--loss", choices=["default", "focal", "class_balanced", "huber"], default="default")
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--training-strategy", choices=["classification", "multiclass", "ordinal", "volatility_regression"], default="classification")
+    parser.add_argument("--aux-objective", choices=["none", "reconstruction", "contrastive"], default="none")
+    parser.add_argument("--aux-weight", type=float, default=0.0)
+    parser.add_argument("--num-classes", type=int, default=1)
     return parser.parse_args()
 
 
@@ -186,7 +240,25 @@ def main() -> None:
             "seed": args.seed,
             "task_name": args.task_name,
             "task_config": str(args.task_config) if args.task_config else None,
-            "model": ModelSelectionConfig(name=args.model, params={"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr}),
+            "model": ModelSelectionConfig(
+                name=args.model,
+                params={
+                    "epochs": args.epochs,
+                    "batch_size": args.batch_size,
+                    "lr": args.lr,
+                    "scheduler": args.scheduler,
+                    "grad_clip_norm": args.grad_clip_norm,
+                    "early_stopping_patience": args.early_stopping_patience,
+                    "mixed_precision": args.mixed_precision,
+                    "loss": args.loss,
+                    "label_smoothing": args.label_smoothing,
+                    "training_strategy": args.training_strategy,
+                    "aux_objective": args.aux_objective,
+                    "aux_weight": args.aux_weight,
+                    "num_classes": args.num_classes,
+                    "output_dim": args.num_classes,
+                },
+            ),
             "task": TaskConfig(),
             "smoke": SmokeConfig(enabled=args.smoke, sample_size=args.smoke_sample_size, epochs=args.smoke_epochs),
             **cfg_data,
@@ -202,6 +274,8 @@ def main() -> None:
         max_years=args.max_years,
         task_name=effective_task_name,
         task_config=effective_task_config,
+        split_mode=args.split_mode,
+        walk_forward_ratio=args.walk_forward_ratio,
     )
     print(json.dumps(metrics, indent=2))
 
