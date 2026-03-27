@@ -195,6 +195,31 @@ Each run writes a unique run directory containing:
 - prediction artifact JSON
 - `train_metrics.json`
 
+
+## Config-Driven Multi-Experiment Training
+
+If you prefer editing one config and rerunning one command, use the experiment manifest flow:
+
+1. Edit `snn_bench/configs/experiments/aapl_model_sweep.yaml`
+2. Run the same command each time:
+
+```bash
+timeout 1200s ./scripts/run_experiments.sh
+```
+
+You can also point to a custom manifest:
+
+```bash
+timeout 1200s ./scripts/run_experiments.sh snn_bench/configs/experiments/aapl_model_sweep.yaml
+```
+
+Useful environment overrides:
+- `OUT_DIR=artifacts/my_experiments`
+- `MAX_YEARS=1`
+- `STOP_ON_ERROR=1`
+
+See `TRAINING_EXPERIMENTS.md` for the full workflow.
+
 ## Developer Commands
 
 ```bash
@@ -204,6 +229,7 @@ make unit-test
 make cache-data
 make smoke-run
 make train-run
+make experiment-run
 make docker-build
 make docker-build-clean
 make docker-cache
