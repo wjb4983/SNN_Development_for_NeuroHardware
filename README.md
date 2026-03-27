@@ -87,7 +87,7 @@ timeout 120s ./scripts/train.sh AAPL 1D 5
 Direct command:
 
 ```bash
-timeout 120s python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts
+timeout 120s python -m snn_bench.scripts.train --ticker AAPL --timeframe 1D --epochs 5 --batch-size 32 --lr 0.001 --out-dir artifacts --max-years 0
 ```
 
 ## End-to-End Script (fetch → smoke → tests → train)
@@ -105,6 +105,7 @@ Optional environment toggles:
 - `INSTALL_DEPS=1` to run `pip install -e .` before pipeline execution (local mode)
 - `RUN_TESTS=0` to skip unit tests
 - `OUT_DIR=artifacts_custom` to change training output path
+- `MAX_YEARS=0` train on all cached years (set `1` to mimic old single-year quick train)
 - `USE_DOCKER=1` to force all python steps to run in `snn-bench:latest`
 - `DOCKER_IMAGE=custom:tag` to override image name in docker mode
 

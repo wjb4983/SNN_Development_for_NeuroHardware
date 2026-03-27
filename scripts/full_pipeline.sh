@@ -16,6 +16,7 @@ OPTION_YEARS="${5:-2}"
 INSTALL_DEPS="${INSTALL_DEPS:-0}"
 RUN_TESTS="${RUN_TESTS:-1}"
 OUT_DIR="${OUT_DIR:-artifacts}"
+MAX_YEARS="${MAX_YEARS:-0}"
 USE_DOCKER="${USE_DOCKER:-0}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-snn-bench:latest}"
 
@@ -121,7 +122,8 @@ run_python_module 600s snn_bench.scripts.train \
   --epochs "$EPOCHS" \
   --batch-size 32 \
   --lr 0.001 \
-  --out-dir "$OUT_DIR"
+  --out-dir "$OUT_DIR" \
+  --max-years "$MAX_YEARS"
 
 echo "[done] Pipeline complete"
 echo "       Metrics: $OUT_DIR/train_metrics.json"
