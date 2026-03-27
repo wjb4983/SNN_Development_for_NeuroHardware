@@ -7,6 +7,8 @@ labeling:
     method: next_window_realized_vol
     window_minutes: 30
 evaluation:
+  primary_ml_metric: rmse
+  primary_trading_metric: null
   confidence_threshold: 0.0
   cost_model:
     fee_bps: 0.0
@@ -14,3 +16,7 @@ evaluation:
     impact_coef: 0.0
   ml_metrics: [mae, rmse, r2]
   trading_metrics: []
+  acceptance_thresholds:
+    ml:
+      rmse_max: 0.020
+      mae_max: 0.014

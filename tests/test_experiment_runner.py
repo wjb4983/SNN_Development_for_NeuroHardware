@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from snn_bench.scripts.run_experiments import _build_run_config, _deep_merge
+from snn_bench.scripts.run_experiments import (
+    _build_leaderboard,
+    _build_run_config,
+    _deep_merge,
+    _metric_direction,
+    _task_primary_metrics,
+)
 
 
 class ExperimentRunnerConfigTest(unittest.TestCase):
@@ -26,6 +32,30 @@ class ExperimentRunnerConfigTest(unittest.TestCase):
         self.assertEqual(cfg["run_name"], "my_run")
         self.assertEqual(cfg["ticker"], "AAPL")
         self.assertEqual(cfg["model"]["name"], "logreg")
+
+    def test_primary_metric_resolution_prefers_task_evaluation(self):
+        metrics = {
+            "task": {"evaluation": {"primary_ml_metric": "f1", "primary_trading_metric": "sharpe"}},
+            "eval": {"roc_auc": 0.7, "f1": 0.6},
+        }
+        ml, trading = _task_primary_metrics(metrics)
+        self.assertEqual(ml, "f1")
+        self.assertEqual(trading, "sharpe")
+
+    def test_metric_direction(self):
+        self.assertEqual(_metric_direction("roc_auc"), "desc")
+        self.assertEqual(_metric_direction("rmse"), "asc")
+        self.assertEqual(_metric_direction("max_drawdown"), "asc")
+
+    def test_build_leaderboard_ranks_by_metric(self):
+        completed = [
+            {"run_id": "r1", "model": "mlp", "task": {"name": "direction_5m_distribution"}, "eval": {"roc_auc": 0.61}},
+            {"run_id": "r2", "model": "logreg", "task": {"name": "direction_5m_distribution"}, "eval": {"roc_auc": 0.67}},
+            {"run_id": "r3", "model": "gbm", "task": {"name": "direction_5m_distribution"}, "eval": {"roc_auc": 0.58}},
+        ]
+        leaderboard = _build_leaderboard(completed, "eval.roc_auc", "ml", "desc")
+        self.assertEqual([row["run_id"] for row in leaderboard], ["r2", "r1", "r3"])
+        self.assertEqual([row["rank"] for row in leaderboard], [1, 2, 3])
 
 
 if __name__ == "__main__":

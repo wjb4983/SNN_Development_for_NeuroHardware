@@ -11,6 +11,8 @@ labeling:
     bins: 5
     fit_on: train_only
 evaluation:
+  primary_ml_metric: roc_auc
+  primary_trading_metric: sharpe
   confidence_threshold: 0.55
   cost_model:
     fee_bps: 1.0
@@ -18,4 +20,11 @@ evaluation:
     impact_coef: 0.15
   ml_metrics: [auc, f1, logloss, brier, calibration]
   trading_metrics: [net_pnl, sharpe, sortino, max_drawdown, turnover]
+  acceptance_thresholds:
+    ml:
+      roc_auc_min: 0.55
+      f1_min: 0.52
+    trading:
+      sharpe_min: 0.40
+      max_drawdown_min: -0.08
   periods_per_year: 19656

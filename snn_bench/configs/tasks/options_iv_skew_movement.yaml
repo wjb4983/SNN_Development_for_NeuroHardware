@@ -7,6 +7,8 @@ labeling:
   movement_threshold: 0.01
   classes: [down, neutral, up]
 evaluation:
+  primary_ml_metric: roc_auc
+  primary_trading_metric: net_pnl
   confidence_threshold: 0.60
   cost_model:
     fee_bps: 1.0
@@ -14,4 +16,11 @@ evaluation:
     impact_coef: 0.3
   ml_metrics: [auc, f1, logloss, brier, calibration]
   trading_metrics: [net_pnl, sharpe, sortino, max_drawdown, turnover]
+  acceptance_thresholds:
+    ml:
+      roc_auc_min: 0.54
+      f1_min: 0.50
+    trading:
+      net_pnl_min: 0.0
+      max_drawdown_min: -0.10
   periods_per_year: 3276

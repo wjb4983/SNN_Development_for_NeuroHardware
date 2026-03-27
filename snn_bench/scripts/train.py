@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
+from snn_bench.eval.repro_eval import no_leakage_walkforward_check
 from snn_bench.eval.reporting import generate_run_report
 from snn_bench.models import ModelSpec, ModelZoo, save_prediction_artifacts, set_global_seed
 from snn_bench.tasks.registry import TaskRegistry, assert_aligned_not_empty, validate_task_model_compatibility
@@ -40,27 +41,57 @@ def _apply_smoke(cfg: BenchmarkConfig, x: np.ndarray, y: np.ndarray) -> tuple[np
 def _split_dataset(
     x: np.ndarray,
     y: np.ndarray,
+    idx: np.ndarray,
     *,
     seed: int,
     split_mode: str = "random",
     test_size: float = 0.2,
     walk_forward_ratio: float = 0.8,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if split_mode == "walk_forward":
         cut = int(len(x) * walk_forward_ratio)
         cut = min(max(1, cut), len(x) - 1)
-        return x[:cut], x[cut:], y[:cut], y[cut:]
+        return x[:cut], x[cut:], y[:cut], y[cut:], idx[:cut], idx[cut:]
     if np.issubdtype(y.dtype, np.floating):
-        return train_test_split(x, y, test_size=test_size, random_state=seed, shuffle=True)
+        return train_test_split(x, y, idx, test_size=test_size, random_state=seed, shuffle=True)
     y_int = y.astype(np.int64)
     return train_test_split(
         x,
         y_int,
+        idx,
         test_size=test_size,
         random_state=seed,
         shuffle=True,
         stratify=y_int if len(np.unique(y_int)) > 1 else None,
     )
+
+
+def _assert_split_alignment(
+    x_train: np.ndarray,
+    x_test: np.ndarray,
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    idx_train: np.ndarray,
+    idx_test: np.ndarray,
+    *,
+    split_mode: str,
+) -> None:
+    if len(x_train) != len(y_train) or len(x_test) != len(y_test):
+        raise ValueError("split feature/label rows are not aligned")
+    if len(idx_train) != len(x_train) or len(idx_test) != len(x_test):
+        raise ValueError("split index rows are not aligned")
+
+    train_set = set(idx_train.tolist())
+    test_set = set(idx_test.tolist())
+    if train_set & test_set:
+        raise ValueError("train/test index overlap detected")
+
+    if split_mode == "walk_forward":
+        train_end_idx = int(np.max(idx_train))
+        prediction_start_idx = int(np.min(idx_test))
+        no_leakage_walkforward_check(train_end_idx=train_end_idx, prediction_start_idx=prediction_start_idx)
+        if not np.all(np.diff(idx_train) >= 0) or not np.all(np.diff(idx_test) >= 0):
+            raise ValueError("walk-forward split indices must be non-decreasing")
 
 
 def run_training(
@@ -92,16 +123,27 @@ def run_training(
     x, y = task_registry.build_dataset(frame, spec)
     assert_aligned_not_empty(x, y)
     x, y, epochs = _apply_smoke(cfg, x, y)
+    idx = np.arange(len(x), dtype=np.int64)
 
     strategy = str(cfg.model.params.get("training_strategy", "classification"))
     y_for_training = y.astype(np.float32) if strategy == "volatility_regression" else y.astype(np.int64)
-    x_train, x_test, y_train, y_test = _split_dataset(
+    x_train, x_test, y_train, y_test, idx_train, idx_test = _split_dataset(
         x,
         y_for_training,
+        idx,
         seed=cfg.seed,
         split_mode=split_mode,
         test_size=0.2,
         walk_forward_ratio=walk_forward_ratio,
+    )
+    _assert_split_alignment(
+        x_train,
+        x_test,
+        y_train,
+        y_test,
+        idx_train,
+        idx_test,
+        split_mode=split_mode,
     )
 
     model_spec = ModelSpec(name=cfg.model.name, family="zoo", params={**cfg.model.params, "seed": cfg.seed})

@@ -9,11 +9,24 @@ defaults:
     epochs: 1
 
 runs:
+  - name: aapl_naive_persistence_smoke
+    model:
+      name: naive_persistence
+      params:
+        confidence: 0.7
+
   - name: aapl_logreg_smoke
     model:
       name: logreg
       params:
         max_iter: 200
+
+  - name: aapl_gbm_smoke
+    model:
+      name: gbm
+      params:
+        n_estimators: 60
+        learning_rate: 0.05
 
   - name: aapl_mlp_smoke
     epochs: 2
@@ -34,4 +47,43 @@ runs:
         hidden_dim: 32
         epochs: 2
         batch_size: 32
+        lr: 0.001
+
+  - name: aapl_snntorch_alif_smoke
+    epochs: 2
+    batch_size: 32
+    model:
+      name: snntorch_alif
+      params:
+        hidden_sizes: [48]
+        depth: 1
+        dropout: 0.05
+        surrogate_type: sigmoid
+        reset_mode: subtract
+        lr: 0.001
+
+  - name: aapl_norse_recurrent_lsnn_smoke
+    epochs: 2
+    batch_size: 32
+    model:
+      name: norse_recurrent_lsnn
+      params:
+        hidden_sizes: [40]
+        depth: 1
+        dropout: 0.0
+        surrogate_type: fast_sigmoid
+        reset_mode: zero
+        lr: 0.001
+
+  - name: aapl_spikingjelly_temporal_conv_smoke
+    epochs: 2
+    batch_size: 32
+    model:
+      name: spikingjelly_temporal_conv
+      params:
+        hidden_sizes: [32]
+        depth: 1
+        dropout: 0.1
+        surrogate_type: tanh
+        reset_mode: zero
         lr: 0.001
