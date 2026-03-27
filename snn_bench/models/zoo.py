@@ -20,6 +20,8 @@ from snn_bench.models.backends import (
     build_spikingjelly_model as build_spikingjelly_backend_model,
 )
 
+from snn_bench.models.bio_plausible import BioPlausibleConfig, BioPlausibleSNN
+
 def set_global_seed(seed: int, deterministic: bool = True) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -719,6 +721,10 @@ class ModelZoo:
     def create(spec: ModelSpec, input_dim: int) -> UnifiedModel:
         n = spec.name.lower()
         p = _validate_and_merge_backend_params(spec.name, dict(spec.params))
+        strategy = str(p.get("training_strategy", "classification"))
+        loss_name = str(p.get("loss", "default"))
+        label_smoothing = float(p.get("label_smoothing", 0.0))
+        class_balance_beta = float(p.get("class_balance_beta", 0.999))
 
         if n in {"logreg", "logistic_regression"}:
             return SklearnModelAdapter(
@@ -765,13 +771,30 @@ class ModelZoo:
                 )
             )
 
+
+        if n in {"bio_plausible", "bio_plausible_lif", "bio_plausible_alif", "bio_plausible_adex"}:
+            if n == "bio_plausible_lif":
+                p.setdefault("neuron_model", "lif")
+            elif n == "bio_plausible_alif":
+                p.setdefault("neuron_model", "alif")
+            elif n == "bio_plausible_adex":
+                p.setdefault("neuron_model", "adex_like")
+            cfg = BioPlausibleConfig.from_params(p)
+            model = BioPlausibleSNN(input_dim=input_dim, config=cfg)
+            return TorchSNNAdapter(
+                model,
+                lr=float(p.get("lr", 1e-3)),
+                epochs=int(p.get("epochs", 5)),
+                batch_size=int(p.get("batch_size", 64)),
+                output_dim=cfg.output_dim,
+                strategy=strategy,
+                loss_name=loss_name,
+                label_smoothing=label_smoothing,
+                class_balance_beta=class_balance_beta,
+            )
+
         snn_params = _normalize_snn_params(p)
         arch = str(p.get("arch", "lif"))
-        strategy = str(p.get("training_strategy", "classification"))
-        loss_name = str(p.get("loss", "default"))
-        label_smoothing = float(p.get("label_smoothing", 0.0))
-        class_balance_beta = float(p.get("class_balance_beta", 0.999))
-
         def _make_torch_adapter(model: torch.nn.Module) -> TorchSNNAdapter:
             return TorchSNNAdapter(
                 model,

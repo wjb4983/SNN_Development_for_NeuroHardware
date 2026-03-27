@@ -1,0 +1,138 @@
+defaults:
+  ticker: AAPL
+  timeframe: 1D
+  seed: 7
+  deterministic: true
+  task_name: direction_5m_distribution
+  task_config: snn_bench/configs/tasks/direction_5m.yaml
+  smoke:
+    enabled: true
+    sample_size: 320
+    epochs: 1
+  hardware:
+    target_profile: loihi2_like
+    quantization: 8
+    max_neurons_per_layer: 4096
+    supported_ops: [linear, lif, readout]
+
+runs:
+  - name: direction5m_naive_persistence
+    model:
+      name: naive_persistence
+      params:
+        confidence: 0.68
+
+  - name: direction5m_logreg
+    model:
+      name: logreg
+      params:
+        max_iter: 250
+
+  - name: direction5m_gbm
+    model:
+      name: gbm
+      params:
+        n_estimators: 80
+        learning_rate: 0.05
+
+  - name: direction5m_ml_baseline
+    model:
+      name: mlp
+      params:
+        max_iter: 220
+        hidden_layer_sizes: [64, 32]
+
+  - name: direction5m_snntorch_lif
+    epochs: 2
+    batch_size: 32
+    model:
+      name: snntorch_lif
+      params:
+        hidden_sizes: [64, 32]
+        depth: 2
+        dropout: 0.1
+        surrogate_type: tanh
+        reset_mode: zero
+        lr: 0.001
+        backend:
+          surrogate_family: tanh
+          reset_policy: zero
+
+  - name: direction5m_bio_lif_pair
+    epochs: 2
+    batch_size: 32
+    model:
+      name: bio_plausible_lif
+      params:
+        hidden_sizes: [64]
+        output_dim: 1
+        neuron_model: lif
+        tau_m: 20.0
+        tau_syn: 8.0
+        refractory_steps: 2
+        stdp_rule: pair
+        tau_pre: 20.0
+        tau_post: 20.0
+        eligibility_tau: 120.0
+        synaptic_delay_steps: 1
+        conductance_based: false
+        homeostasis_rate_target_hz: 8.0
+        homeostasis_reg_strength: 0.002
+        threshold_adaptation_rate: 0.01
+        lr: 0.001
+
+  - name: direction5m_bio_alif_triplet
+    epochs: 2
+    batch_size: 32
+    model:
+      name: bio_plausible_alif
+      params:
+        hidden_sizes: [72]
+        output_dim: 1
+        neuron_model: alif
+        tau_m: 24.0
+        tau_syn: 10.0
+        refractory_steps: 2
+        adaptation_tau: 150.0
+        adaptation_strength: 0.08
+        stdp_rule: triplet
+        tau_pre: 20.0
+        tau_post: 20.0
+        tau_pre_long: 90.0
+        tau_post_long: 90.0
+        eligibility_tau: 160.0
+        synaptic_delay_steps: 2
+        conductance_based: true
+        homeostasis_rate_target_hz: 10.0
+        homeostasis_reg_strength: 0.003
+        threshold_adaptation_rate: 0.015
+        lr: 0.001
+
+  - name: direction5m_bio_adex_reward
+    epochs: 2
+    batch_size: 32
+    model:
+      name: bio_plausible_adex
+      params:
+        hidden_sizes: [80]
+        output_dim: 1
+        neuron_model: adex_like
+        tau_m: 30.0
+        tau_syn: 12.0
+        refractory_steps: 3
+        adaptation_tau: 200.0
+        adaptation_strength: 0.06
+        adex_delta_t: 0.2
+        adex_exp_scale: 0.05
+        stdp_rule: reward_modulated
+        tau_pre: 18.0
+        tau_post: 24.0
+        reward_scale: 0.7
+        reward_signal: 0.15
+        eligibility_tau: 180.0
+        synaptic_delay_steps: 2
+        conductance_based: true
+        homeostasis_rate_target_hz: 9.0
+        homeostasis_reg_strength: 0.003
+        threshold_adaptation_rate: 0.02
+        lr: 0.001

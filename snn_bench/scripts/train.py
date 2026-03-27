@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from snn_bench.configs.settings import BenchmarkConfig, HardwareConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
+from snn_bench.eval.metrics import bio_plausibility_metrics
 from snn_bench.eval.repro_eval import no_leakage_walkforward_check
 from snn_bench.eval.reporting import generate_run_report
 from snn_bench.models import ModelSpec, ModelZoo, save_prediction_artifacts, set_global_seed
@@ -166,6 +167,7 @@ def run_training(
 
     y_prob = model.predict_proba(x_test)
     eval_metrics = model.evaluate(x_test, y_test)
+    eval_metrics["bio_plausibility"] = bio_plausibility_metrics(y_prob, dt_ms=1.0, threshold=0.5, stability_window=8)
 
     task_meta = {
         "name": spec.name,

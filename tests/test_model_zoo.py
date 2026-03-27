@@ -61,6 +61,7 @@ class ModelZooInterfaceTest(unittest.TestCase):
             ("snntorch_alif", {"hidden_sizes": [32], "depth": 1, "dropout": 0.0, "surrogate_type": "sigmoid", "reset_mode": "subtract"}),
             ("norse_lsnn", {"hidden_sizes": [40], "depth": 1, "dropout": 0.1, "surrogate_type": "fast_sigmoid", "reset_mode": "zero"}),
             ("spikingjelly_lif", {"hidden_sizes": [32, 16], "depth": 2, "dropout": 0.0, "surrogate_type": "tanh", "reset_mode": "subtract"}),
+            ("bio_plausible_alif", {"hidden_sizes": [32], "output_dim": 1, "neuron_model": "alif", "tau_m": 20.0, "tau_syn": 8.0, "refractory_steps": 2, "stdp_rule": "triplet", "tau_pre": 20.0, "tau_post": 20.0, "eligibility_tau": 100.0}),
         ]
         for model_name, params in sweep:
             with self.subTest(model=model_name):
