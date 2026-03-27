@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from snn_bench.models.backends import LavaBackendAdapter, NorseBackendAdapter, SNNtorchBackendAdapter, SpikingJellyBackendAdapter
 from snn_bench.models.zoo import ModelSpec, ModelZoo, TorchSNNAdapter, save_prediction_artifacts, set_global_seed
 
 
@@ -74,6 +75,33 @@ class ModelZooInterfaceTest(unittest.TestCase):
         for model_name, params in sweep:
             with self.subTest(model=model_name):
                 self._assert_model_roundtrip(model_name, params=params, seq=True)
+
+
+    def test_backend_dispatch_uses_native_backend_modules(self):
+        cases = [
+            ("snntorch_lif", SNNtorchBackendAdapter, {"backend": {"surrogate_family": "tanh", "reset_policy": "zero"}}),
+            ("norse_lsnn", NorseBackendAdapter, {"backend": {"recurrent_cell_type": "lsnn", "surrogate_family": "fast_sigmoid", "reset_policy": "zero"}}),
+            ("spikingjelly_temporal_conv", SpikingJellyBackendAdapter, {"backend": {"event_encoding_mode": "temporal", "surrogate_family": "tanh", "reset_policy": "subtract"}}),
+            ("lava_lif", LavaBackendAdapter, {"backend": {"event_encoding_mode": "delta", "reset_policy": "zero"}}),
+        ]
+
+        for model_name, expected_cls, extra in cases:
+            with self.subTest(model=model_name):
+                params = {"epochs": 1, "batch_size": 8, "hidden_sizes": [16], "depth": 1, "dropout": 0.0, **extra}
+                model = ModelZoo.create(ModelSpec(name=model_name, family="zoo", params=params), input_dim=self.x.shape[1])
+                self.assertIsInstance(model, TorchSNNAdapter)
+                self.assertIsInstance(model.model, expected_cls)
+
+    def test_backend_specific_key_validation(self):
+        bad_spec = ModelSpec(
+            name="spikingjelly_lif",
+            family="zoo",
+            params={
+                "backend": {"event_encoding_mode": "invalid_mode"},
+            },
+        )
+        with self.assertRaises(ValueError):
+            ModelZoo.create(bad_spec, input_dim=self.x.shape[1])
 
 
 if __name__ == "__main__":

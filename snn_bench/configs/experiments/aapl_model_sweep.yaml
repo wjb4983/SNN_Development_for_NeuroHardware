@@ -48,6 +48,9 @@ runs:
         epochs: 2
         batch_size: 32
         lr: 0.001
+        backend:
+          surrogate_family: tanh
+          reset_policy: zero
 
   - name: aapl_snntorch_alif_smoke
     epochs: 2
@@ -61,6 +64,9 @@ runs:
         surrogate_type: sigmoid
         reset_mode: subtract
         lr: 0.001
+        backend:
+          surrogate_family: sigmoid
+          reset_policy: subtract
 
   - name: aapl_norse_recurrent_lsnn_smoke
     epochs: 2
@@ -74,6 +80,10 @@ runs:
         surrogate_type: fast_sigmoid
         reset_mode: zero
         lr: 0.001
+        backend:
+          recurrent_cell_type: lsnn
+          surrogate_family: fast_sigmoid
+          reset_policy: zero
 
   - name: aapl_spikingjelly_temporal_conv_smoke
     epochs: 2
@@ -87,3 +97,21 @@ runs:
         surrogate_type: tanh
         reset_mode: zero
         lr: 0.001
+        backend:
+          event_encoding_mode: temporal
+          surrogate_family: tanh
+          reset_policy: zero
+
+  - name: aapl_lava_lif_smoke
+    epochs: 2
+    batch_size: 32
+    model:
+      name: lava_lif
+      params:
+        hidden_sizes: [32]
+        depth: 1
+        dropout: 0.0
+        lr: 0.001
+        backend:
+          event_encoding_mode: delta
+          reset_policy: zero

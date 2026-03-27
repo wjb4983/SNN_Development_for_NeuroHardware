@@ -9,6 +9,9 @@ model:
     lr: 0.001
     batch_size: 32
     epochs: 2
+    backend:
+      surrogate_family: tanh
+      reset_policy: zero
 smoke:
   enabled: true
   sample_size: 256
