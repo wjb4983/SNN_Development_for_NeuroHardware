@@ -16,3 +16,9 @@ smoke:
   enabled: true
   sample_size: 256
   epochs: 1
+
+hardware:
+  target_profile: generic_edge_neuromorphic
+  quantization: 6
+  max_neurons_per_layer: 1024
+  supported_ops: [linear, lif, readout]

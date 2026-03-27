@@ -33,6 +33,13 @@ class TaskConfig(BaseModel):
     label_semantics: str = "1 if next-bar close-to-close return > 0, else 0"
 
 
+class HardwareConfig(BaseModel):
+    target_profile: str = "loihi2_like"
+    quantization: int = 8
+    max_neurons_per_layer: int = 2048
+    supported_ops: list[str] = Field(default_factory=lambda: ["linear", "lif", "readout"])
+
+
 class BenchmarkConfig(BaseModel):
     """Top-level benchmark configuration."""
 
@@ -53,3 +60,4 @@ class BenchmarkConfig(BaseModel):
     task: TaskConfig = TaskConfig()
     smoke: SmokeConfig = SmokeConfig()
     data_paths: DataPaths = DataPaths()
+    hardware: HardwareConfig = HardwareConfig()

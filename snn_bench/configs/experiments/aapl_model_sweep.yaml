@@ -7,6 +7,11 @@ defaults:
     enabled: true
     sample_size: 256
     epochs: 1
+  hardware:
+    target_profile: loihi2_like
+    quantization: 8
+    max_neurons_per_layer: 4096
+    supported_ops: [linear, lif, readout]
 
 runs:
   - name: aapl_naive_persistence_smoke

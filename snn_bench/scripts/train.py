@@ -10,7 +10,7 @@ import pandas as pd
 import yaml
 from sklearn.model_selection import train_test_split
 
-from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
+from snn_bench.configs.settings import BenchmarkConfig, HardwareConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
 from snn_bench.eval.repro_eval import no_leakage_walkforward_check
@@ -220,6 +220,7 @@ def run_training(
         "model": cfg.model.name,
         "model_params": cfg.model.params,
         "task": task_meta,
+        "hardware": cfg.hardware.model_dump(),
         "train_info": train_info,
         "eval": eval_metrics,
         "checkpoint": str(checkpoint),
@@ -310,6 +311,7 @@ def main() -> None:
             ),
             "task": TaskConfig(),
             "smoke": SmokeConfig(enabled=args.smoke, sample_size=args.smoke_sample_size, epochs=args.smoke_epochs),
+            "hardware": HardwareConfig(),
             **cfg_data,
         }
     )
