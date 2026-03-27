@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from snn_bench.configs.settings import BenchmarkConfig
+from snn_bench.eval.reporting import generate_run_report
 from snn_bench.scripts.train import run_training
 
 
@@ -57,6 +58,14 @@ def run_experiments(manifest_path: Path, out_dir: Path, max_years: int = 0, stop
         try:
             cfg = BenchmarkConfig.model_validate(cfg_dict)
             metrics = run_training(cfg, out_dir=out_dir, max_years=max_years)
+            run_dir = Path(metrics.get("run_dir", out_dir / metrics["run_id"]))
+            try:
+                report_path = generate_run_report(run_dir)
+                metrics["report"] = str(report_path)
+                (run_dir / "train_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001 - report generation should not break experiment sweeps
+                metrics["report_error"] = str(exc)
+                (run_dir / "train_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
             completed.append(metrics)
             print(f"[ok] completed run: {run_name}")
         except Exception as exc:  # noqa: BLE001 - keep sweep execution resilient

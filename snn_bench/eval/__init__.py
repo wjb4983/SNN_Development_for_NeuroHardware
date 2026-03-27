@@ -1,4 +1,5 @@
 from .metrics import binary_accuracy
+from .reporting import generate_run_report
 from .repro_eval import (
     CostModel,
     compute_ml_metrics,
@@ -18,4 +19,5 @@ __all__ = [
     "compute_trading_metrics",
     "evaluate_direction_task",
     "no_leakage_walkforward_check",
+    "generate_run_report",
 ]

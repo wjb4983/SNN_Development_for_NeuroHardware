@@ -203,8 +203,18 @@ Each run writes a unique run directory containing:
 - model checkpoint
 - prediction artifact JSON
 - `train_metrics.json`
+- `report.md` (auto-generated post-train markdown summary)
+- `plots/` PNG visualizations
 
-`train_metrics.json` now includes the full `task` metadata block, and prediction artifacts include `target_summary` with horizon + label semantics.  
+The post-train report generator creates:
+- `plots/confusion_matrix.png`
+- `plots/roc_curve.png` (binary tasks with both classes present)
+- `plots/pr_curve.png` (binary tasks with both classes present)
+- `plots/calibration_plot.png`
+- `plots/probability_histogram.png`
+- `plots/equity_curve.png` when trading metrics are available in task evaluation config
+
+`train_metrics.json` now includes the full `task` metadata block (including task `evaluation` config), and prediction artifacts include `target_summary` with horizon + label semantics.  
 To change this metadata, define `task` in your config file and run `python -m snn_bench.scripts.train --config ...`.
 
 

@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from snn_bench.configs.settings import BenchmarkConfig, ModelSelectionConfig, SmokeConfig, TaskConfig
 from snn_bench.data_connectors.backtest_store import BacktestBarStoreConnector
 from snn_bench.data_connectors.snapshot_cache import SnapshotCacheConnector
+from snn_bench.eval.reporting import generate_run_report
 from snn_bench.models import ModelSpec, ModelZoo, save_prediction_artifacts, set_global_seed
 from snn_bench.tasks.registry import TaskRegistry, assert_aligned_not_empty, validate_task_model_compatibility
 from snn_bench.utils.secrets import load_massive_api_key
@@ -88,6 +89,7 @@ def run_training(
         "classes": cfg.task.classes,
         "label_semantics": cfg.task.label_semantics,
         "task_config": str(spec.path),
+        "evaluation": (spec.raw.get("evaluation") or {}),
     }
     run_id = (
         f"{cfg.run_name}_{cfg.model.name}_{spec.name}_{cfg.task.horizon}_"
@@ -131,8 +133,18 @@ def run_training(
         "eval": eval_metrics,
         "checkpoint": str(checkpoint),
         "predictions": str(pred_artifact),
+        "run_dir": str(run_dir),
     }
-    (run_dir / "train_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    metrics_path = run_dir / "train_metrics.json"
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    try:
+        report_path = generate_run_report(run_dir)
+        metrics["report"] = str(report_path)
+    except Exception as exc:  # noqa: BLE001 - report generation should not block training artifacts
+        metrics["report_error"] = str(exc)
+
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     return metrics
 
 

@@ -54,4 +54,15 @@ Each run still writes a per-run folder in `OUT_DIR`. The sweep also writes:
 
 - `OUT_DIR/experiment_summary.json`
 
+Each per-run folder now also includes automated reporting artifacts:
+
+- `train_metrics.json`
+- `report.md` (markdown summary with embedded image links)
+- `plots/confusion_matrix.png`
+- `plots/roc_curve.png` (binary tasks with both classes present)
+- `plots/pr_curve.png` (binary tasks with both classes present)
+- `plots/calibration_plot.png`
+- `plots/probability_histogram.png`
+- `plots/equity_curve.png` (when trading metrics are configured for the task)
+
 This summary lists total/completed/failed runs and run IDs.
