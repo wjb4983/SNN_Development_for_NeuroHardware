@@ -217,6 +217,9 @@ Useful environment overrides:
 - `OUT_DIR=artifacts/my_experiments`
 - `MAX_YEARS=1`
 - `STOP_ON_ERROR=1`
+- `USE_DOCKER=1` (force docker mode)
+
+If local `python` is missing dependencies like `PyYAML`, `run_experiments.sh` auto-falls back to conda env `snnbench` or Docker image `snn-bench:latest` when available.
 
 See `TRAINING_EXPERIMENTS.md` for the full workflow.
 

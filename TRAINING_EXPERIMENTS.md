@@ -22,6 +22,11 @@ Or point to another manifest:
 timeout 1200s ./scripts/run_experiments.sh snn_bench/configs/experiments/aapl_model_sweep.yaml
 ```
 
+
+If your local `python` is missing dependencies (for example `PyYAML`), the wrapper auto-falls back to:
+1. Conda env `snnbench` (if present), then
+2. Docker image `snn-bench:latest` (if present).
+
 ## 3) Common toggles
 
 ```bash
