@@ -50,7 +50,7 @@ class ModelZooInterfaceTest(unittest.TestCase):
         self.assertIsInstance(train_info, dict)
 
     def test_baseline_models(self):
-        for model_name in ["logreg", "gbm", "mlp"]:
+        for model_name in ["naive_persistence", "logreg", "gbm", "mlp"]:
             with self.subTest(model=model_name):
                 self._assert_model_roundtrip(model_name)
 

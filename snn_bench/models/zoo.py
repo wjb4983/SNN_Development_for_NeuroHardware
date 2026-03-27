@@ -239,6 +239,36 @@ class UnifiedModel:
         return metrics
 
 
+class NaivePersistenceAdapter(UnifiedModel):
+    """Simple persistence baseline for binary classification.
+
+    Predicts the last observed train label probability for every future sample.
+    """
+
+    def __init__(self, confidence: float = 0.7) -> None:
+        self.last_label = 0
+        self.confidence = min(max(float(confidence), 0.5), 0.999)
+
+    def fit(self, x_train: np.ndarray, y_train: np.ndarray, **kwargs: Any) -> dict[str, Any]:
+        if len(y_train) == 0:
+            raise ValueError("NaivePersistenceAdapter requires non-empty labels")
+        self.last_label = int(np.asarray(y_train).reshape(-1)[-1] > 0)
+        return {"train_samples": int(len(x_train)), "last_label": self.last_label}
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        p = self.confidence if self.last_label == 1 else (1.0 - self.confidence)
+        return np.full(shape=(len(x),), fill_value=p, dtype=np.float32)
+
+    def save_checkpoint(self, path: Path) -> None:
+        payload = {"last_label": self.last_label, "confidence": self.confidence}
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def load_checkpoint(self, path: Path) -> None:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.last_label = int(payload.get("last_label", 0))
+        self.confidence = float(payload.get("confidence", 0.7))
+
+
 class SklearnModelAdapter(UnifiedModel):
     def __init__(self, estimator: Any) -> None:
         self.estimator = estimator
@@ -645,6 +675,9 @@ class ModelZoo:
                     random_state=int(p.get("seed", 7)),
                 )
             )
+
+        if n in {"naive_persistence", "persistence"}:
+            return NaivePersistenceAdapter(confidence=float(p.get("confidence", 0.7)))
 
         if n in {"xgboost", "gbm", "gradient_boosting"}:
             try:
