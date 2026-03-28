@@ -1,0 +1,39 @@
+dataset:
+  target_asset: ES_F
+  streams:
+    - asset: ES_F
+      path: examples/multistream_data/ES_F.csv
+      max_staleness_ms: 50
+    - asset: SPY
+      path: examples/multistream_data/SPY.csv
+      max_staleness_ms: 120
+    - asset: ZN_F
+      path: examples/multistream_data/ZN_F.csv
+      max_staleness_ms: 300
+    - asset: DXY
+      path: examples/multistream_data/DXY.csv
+      max_staleness_ms: 500
+  feature:
+    event_type_vocab: [trade, quote, book]
+
+model:
+  hidden_dim: 64
+  encoder_dim: 32
+  fusion_dim: 64
+  recurrent_decay: 0.9
+  dropout: 0.1
+  top_k_edges: 8
+
+train:
+  seed: 7
+  batch_size: 128
+  epochs: 5
+  lr: 0.001
+  weight_decay: 0.0001
+  horizons_s: [1, 5]
+  walk_forward_folds: 4
+  train_ratio: 0.7
+  val_ratio: 0.1
+  transaction_cost_bps: 1.2
+
+output_dir: artifacts/multistream
