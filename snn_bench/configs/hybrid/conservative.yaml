@@ -1,0 +1,41 @@
+reproducibility:
+  seed: 42
+
+data:
+  n_steps: 5000
+  seed: 42
+
+artifacts:
+  slow_model_path: artifacts/hybrid_conservative/slow_ann.pkl
+  fast_model_path: artifacts/hybrid_conservative/fast_snn.pkl
+  fusion_model_path: artifacts/hybrid_conservative/fusion.pkl
+  backtest_report_path: artifacts/hybrid_conservative/backtest_report.json
+
+slow_model:
+  hidden_layer_sizes: [32, 16]
+  alpha: 0.0005
+
+fast_model:
+  hidden_dim: 20
+  lr: 0.0008
+  epochs: 25
+
+fusion:
+  slow_weight: 0.70
+  fast_weight: 0.30
+
+risk_gate:
+  warning_vol: 0.0012
+  block_vol: 0.0019
+  warning_anomaly: 1.9
+  block_anomaly: 2.7
+  warning_leverage: 0.35
+
+backtest:
+  score_to_pos: 65.0
+  max_position: 0.75
+  max_turnover_step: 0.22
+  cooldown_steps: 10
+  tx_cost_bps: 2.0
+  slippage_bps: 1.2
+  latency_steps: 2

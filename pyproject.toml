@@ -35,3 +35,4 @@ include = ["snn_bench*"]
 
 [project.scripts]
 export-neuromorphic = "snn_bench.scripts.export_neuromorphic:main"
+hybrid-quant = "snn_bench.hybrid.cli:main"
