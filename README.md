@@ -266,3 +266,52 @@ make docker-cache
 make docker-smoke
 make docker-train
 ```
+
+## LOB Alpha (Production-style SNN + ANN Baseline)
+
+This repository now includes a dedicated event-driven limit order book alpha pipeline under `src/`:
+
+```text
+src/
+  data/      # FI-2010 + generic CSV loaders, sequence dataset
+  features/  # LOB feature engineering + spike encoders (rate/TTFS)
+  models/    # Conv1D+recurrent SNN + LSTM ANN baseline
+  train/     # Surrogate gradient trainer with TBPTT/clip/early stop
+  eval/      # Purged walk-forward, metrics, cost-aware backtest
+configs/
+  lob_alpha.yaml
+scripts/
+  lob_cli.py
+```
+
+### Minimal setup
+
+```bash
+timeout 300s python -m pip install -r requirements.txt
+```
+
+### Exact commands
+
+Train SNN (default):
+
+```bash
+timeout 1800s python scripts/lob_cli.py train --config configs/lob_alpha.yaml
+```
+
+Evaluate checkpoint:
+
+```bash
+timeout 600s python scripts/lob_cli.py evaluate \
+  --config configs/lob_alpha.yaml \
+  --checkpoint artifacts/lob_alpha/snn_500ms/checkpoint.pt
+```
+
+Backtest saved predictions:
+
+```bash
+timeout 300s python scripts/lob_cli.py backtest \
+  --config configs/lob_alpha.yaml \
+  --predictions artifacts/lob_alpha/evaluation.json
+```
+
+Switch baseline to ANN LSTM by editing `model.name: lstm` in `configs/lob_alpha.yaml`.

@@ -1,0 +1,30 @@
+seed: 42
+source: generic
+data_path: data/lob_events.csv
+horizon: 500ms
+window: 128
+stride: 1
+features:
+  levels: 5
+  encoding: rate # rate | ttfs | none
+  timesteps: 16
+model:
+  name: snn # snn | lstm
+  conv_channels: 64
+  hidden_size: 128
+train:
+  epochs: 25
+  batch_size: 64
+  lr: 0.001
+  clip_grad: 1.0
+  patience: 5
+  tbptt_steps: 32
+  amp: false
+eval:
+  n_splits: 4
+  embargo_pct: 0.01
+  purge_window: 64
+  fee_bps: 0.2
+  spread_bps: 1.0
+  latency_steps: 2
+output_dir: artifacts/lob_alpha
