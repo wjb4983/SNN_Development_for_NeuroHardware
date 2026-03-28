@@ -384,3 +384,17 @@ Pipeline artifacts include:
 - policy checkpoints (`policy_bc_best.pt`, optional `policy_rl_last.pt`)
 - evaluation report (`eval_report.md`) + metric JSON
 - plots (`action_sequence.png`)
+
+## Streaming SNN Risk Sentinel
+
+This repo now includes a production-oriented **streaming SNN risk sentinel** with:
+- anomaly scoring via reconstruction error,
+- regime classification,
+- and risk gate output (`NORMAL`, `WARNING`, `BLOCK`) with hysteresis.
+
+CLI scripts:
+- `python -m snn_bench.scripts.train_sentinel`
+- `python -m snn_bench.scripts.calibrate_thresholds`
+- `python -m snn_bench.scripts.simulate_gate_impact`
+
+See `docs/operator_guide_sentinel.md` for runbook and command examples.
