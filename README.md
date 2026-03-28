@@ -315,3 +315,72 @@ timeout 300s python scripts/lob_cli.py backtest \
 ```
 
 Switch baseline to ANN LSTM by editing `model.name: lstm` in `configs/lob_alpha.yaml`.
+
+## Event-driven SNN execution policy approximator
+
+This repository now includes an end-to-end pipeline for child-order execution decisions with action space:
+`{join_bid, join_ask, improve, cross, cancel, hold}` and discrete size buckets.
+
+### Data schema (event logs)
+Expected columns in CSV/JSONL:
+- `ts_ns` (int nanoseconds)
+- `event_type` in `{market_book, market_trade, market_cancel, own_placement, own_queue, own_fill}`
+- `bid_prices`, `bid_sizes`, `ask_prices`, `ask_sizes` (arrays or CSV strings)
+- optional: `side`, `price`, `size`, `level`, `own_order_id`, `queue_position`, `fill_size`, `action`, `size_bucket`
+
+### Features
+The preprocessor derives causal event features including:
+- top-k book levels (price + size)
+- spread and depth imbalance
+- short-term realized volatility from rolling mid returns
+- trade intensity (trades per second in recent horizon)
+- queue position
+- time since last fill
+
+### Training stages
+- **Stage A (behavior cloning):** supervised imitation from historical labels.
+- **Stage B (optional RL):** actor-critic fine-tuning over replay batches.
+- Constraint layer enforces max participation, max order rate, and cancel throttling.
+
+### Scripts
+Preprocess raw events into sequence tensors:
+```bash
+timeout 120s python -m snn_bench.scripts.preprocess \
+  --events data/execution_events.csv \
+  --out-dir artifacts/execution_policy/preprocessed \
+  --top-k 5 --lookback-events 50
+```
+
+Train behavior cloning SNN policy:
+```bash
+timeout 1200s python -m snn_bench.scripts.train_bc \
+  --payload artifacts/execution_policy/preprocessed/sequence_payload.npz \
+  --meta artifacts/execution_policy/preprocessed/meta.json \
+  --out-dir artifacts/execution_policy/bc \
+  --window 64 --epochs 20 --batch-size 64 --model snn
+```
+
+Optional RL fine-tuning:
+```bash
+timeout 1200s python -m snn_bench.scripts.train_rl \
+  --payload artifacts/execution_policy/preprocessed/sequence_payload.npz \
+  --meta artifacts/execution_policy/preprocessed/meta.json \
+  --bc-checkpoint artifacts/execution_policy/bc/policy_bc_best.pt \
+  --out-dir artifacts/execution_policy/rl \
+  --epochs 5
+```
+
+Evaluate policy and emit report/plots:
+```bash
+timeout 300s python -m snn_bench.scripts.eval_policy \
+  --payload artifacts/execution_policy/preprocessed/sequence_payload.npz \
+  --meta artifacts/execution_policy/preprocessed/meta.json \
+  --checkpoint artifacts/execution_policy/bc/policy_bc_best.pt \
+  --out-dir artifacts/execution_policy/eval
+```
+
+### Outputs
+Pipeline artifacts include:
+- policy checkpoints (`policy_bc_best.pt`, optional `policy_rl_last.pt`)
+- evaluation report (`eval_report.md`) + metric JSON
+- plots (`action_sequence.png`)
