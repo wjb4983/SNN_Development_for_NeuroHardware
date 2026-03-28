@@ -31,8 +31,9 @@ lightning = ["pytorch-lightning>=2.2"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["snn_bench*"]
+include = ["snn_bench*", "src*", "src.quant_template*"]
 
 [project.scripts]
 export-neuromorphic = "snn_bench.scripts.export_neuromorphic:main"
 hybrid-quant = "snn_bench.hybrid.cli:main"
+quant-template-run = "src.quant_template.cli:main"

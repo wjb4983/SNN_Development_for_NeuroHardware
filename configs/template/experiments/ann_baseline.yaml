@@ -1,0 +1,5 @@
+extends: ../default.yaml
+model:
+  family: ann
+  name: ann_logistic_baseline
+notes: "ANN baseline experiment override"

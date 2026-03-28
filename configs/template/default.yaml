@@ -1,0 +1,13 @@
+seed: 42
+output_dir: artifacts/template
+model:
+  family: ann
+  name: ann_logistic_baseline
+split:
+  n_splits: 4
+  purge_window: 10
+  embargo_pct: 0.01
+backtest:
+  execution_lag: 1
+  fee_bps: 0.5
+  spread_bps: 0.5

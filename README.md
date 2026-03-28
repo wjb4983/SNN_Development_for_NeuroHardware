@@ -2,6 +2,38 @@
 
 Modular benchmark framework for **spiking neural network (SNN)** quant experiments.
 
+## Reusable SNN Quant Research Template (New)
+
+This repository now includes a reusable template package under `src/quant_template/` with:
+- model interfaces (`QuantModel`, `ANNModel`, `SNNModel`)
+- ANN baseline + SNN-proxy model adapters
+- deterministic seed utility
+- purged + embargo walk-forward splitting
+- unified ML + trading KPI metrics
+- simple event-driven backtest engine with transaction costs
+- dual logging (console + `run.log`)
+- local experiment tracking (`tracking/experiment_log.csv` + per-split JSON)
+- a standardized `run_experiment(...)` train/eval API
+
+Template configs:
+- `configs/template/default.yaml`
+- `configs/template/experiments/ann_baseline.yaml`
+- `configs/template/experiments/snn_proxy.yaml`
+
+Quickstart:
+
+```bash
+timeout 180s pip install -e .
+timeout 120s make template-run
+timeout 120s make template-run-snn
+```
+
+Or run directly:
+
+```bash
+timeout 120s python -m src.quant_template.cli --config configs/template/default.yaml
+```
+
 ## Repository Layout
 
 ```text
@@ -464,4 +496,3 @@ timeout 120s python -m snn_bench.hybrid.cli train_slow --config snn_bench/config
 
 - `snn_bench/configs/hybrid/base.yaml` (balanced)
 - `snn_bench/configs/hybrid/conservative.yaml` (tighter risk controls)
-
