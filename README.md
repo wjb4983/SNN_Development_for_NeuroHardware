@@ -398,3 +398,7 @@ CLI scripts:
 - `python -m snn_bench.scripts.simulate_gate_impact`
 
 See `docs/operator_guide_sentinel.md` for runbook and command examples.
+
+## Multi-Stream Cross-Asset Lead/Lag Module
+
+See `docs/multistream_cross_asset_snn.md` for the full implementation, config, scripts, and ablation commands.
