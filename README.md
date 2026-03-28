@@ -402,3 +402,66 @@ See `docs/operator_guide_sentinel.md` for runbook and command examples.
 ## Multi-Stream Cross-Asset Lead/Lag Module
 
 See `docs/multistream_cross_asset_snn.md` for the full implementation, config, scripts, and ablation commands.
+
+## Hybrid Quant Stack (Slow ANN + Fast SNN + Risk Gate)
+
+This repository now includes a config-driven hybrid stack with strict risk controls:
+
+- **Slow ANN** (`snn_bench/hybrid/slow_model_ann.py`): minute/hour features (returns, vol, macro proxies, cross-sectional factors).
+- **Fast SNN** (`snn_bench/hybrid/fast_model_snn.py`): event-level microstructure features (LOB imbalance, trade flow, cancel dynamics).
+- **Risk gate** (`snn_bench/hybrid/risk_gate.py`): regime + anomaly gating with `NORMAL/WARNING/BLOCK` states.
+- **Fusion** (`snn_bench/hybrid/fusion.py`): confidence-aware weighted blending into a final trading score.
+- **Backtest** (`snn_bench/hybrid/backtest.py`): costs/slippage/latency/turnover limits and component attribution.
+
+### CLI Commands
+
+Install editable once:
+
+```bash
+timeout 180s pip install -e .
+```
+
+Train and backtest (base profile):
+
+```bash
+timeout 120s hybrid-quant train_slow --config snn_bench/configs/hybrid/base.yaml
+timeout 120s hybrid-quant train_fast --config snn_bench/configs/hybrid/base.yaml
+timeout 60s hybrid-quant train_fusion --config snn_bench/configs/hybrid/base.yaml
+timeout 120s hybrid-quant backtest_hybrid --config snn_bench/configs/hybrid/base.yaml
+```
+
+Or direct module invocation:
+
+```bash
+timeout 120s python -m snn_bench.hybrid.cli train_slow --config snn_bench/configs/hybrid/base.yaml
+```
+
+### Evaluation Outputs
+
+`backtest_hybrid` writes a JSON report including:
+
+- Sharpe
+- Sortino
+- max drawdown
+- turnover
+- hit rate
+- attribution by slow / fast / risk components
+- risk state counts
+
+### Practical Tuning Checklist
+
+1. **Risk first:** tighten `risk_gate.block_vol` and `risk_gate.block_anomaly` before increasing model aggressiveness.
+2. **Turnover realism:** cap `backtest.max_turnover_step` based on venue liquidity and expected fill rates.
+3. **Latency stress:** increase `backtest.latency_steps` to test decay of microstructure edge.
+4. **Cost stress:** test higher `tx_cost_bps` + `slippage_bps` and require Sharpe stability.
+5. **Fusion balance:** adjust `fusion.slow_weight`/`fast_weight`; keep slow-heavy in unstable regimes.
+6. **De-lever policy:** tune `risk_gate.warning_leverage` to prevent drawdown clusters.
+7. **Cooldown discipline:** lengthen `backtest.cooldown_steps` after BLOCK events for volatile markets.
+8. **Reproducibility:** pin `reproducibility.seed` and artifact paths per experiment profile.
+9. **Out-of-sample runs:** vary `data.seed` and compare distribution of metrics, not just single-run point estimates.
+
+### Sample Config Profiles
+
+- `snn_bench/configs/hybrid/base.yaml` (balanced)
+- `snn_bench/configs/hybrid/conservative.yaml` (tighter risk controls)
+
