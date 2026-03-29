@@ -1,0 +1,126 @@
+defaults:
+  ticker: AAPL
+  timeframe: 1D
+  task_name: regime_classification
+  seed: 7
+  deterministic: true
+  smoke:
+    enabled: true
+    sample_size: 256
+    epochs: 1
+  epochs: 2
+  batch_size: 32
+  hardware:
+    target_profile: loihi2_like
+    quantization: 8
+    max_neurons_per_layer: 4096
+    supported_ops: [linear, lif, readout]
+
+runs:
+  - name: regime_markov_chain
+    model:
+      name: markov_chain
+      params:
+        n_states: 4
+        n_return_bins: 8
+        n_vol_bins: 4
+        smoothing: 0.01
+
+  - name: regime_hmm_gaussian
+    model:
+      name: hmm_gaussian
+      params:
+        n_states: 4
+        smoothing: 0.01
+        regularization: 0.001
+        emission_type: gaussian_diag
+        max_iter: 50
+        tol: 0.0001
+        seed: 7
+
+  - name: regime_snntorch_lif
+    model:
+      name: snntorch_lif
+      params:
+        hidden_sizes: [64, 32]
+        depth: 2
+        dropout: 0.1
+        surrogate_type: tanh
+        reset_mode: zero
+        beta: 0.95
+        lr: 0.001
+        epochs: 2
+        batch_size: 32
+        training_strategy: multiclass
+        output_dim: 4
+        backend:
+          surrogate_family: tanh
+          reset_policy: zero
+
+  - name: regime_snntorch_alif
+    model:
+      name: snntorch_alif
+      params:
+        hidden_sizes: [64, 32]
+        depth: 2
+        dropout: 0.1
+        surrogate_type: fast_sigmoid
+        reset_mode: subtract
+        beta: 0.95
+        lr: 0.001
+        epochs: 2
+        batch_size: 32
+        training_strategy: multiclass
+        output_dim: 4
+        backend:
+          surrogate_family: fast_sigmoid
+          reset_policy: subtract
+
+  - name: regime_norse_recurrent_lsnn
+    model:
+      name: norse_recurrent_lsnn
+      params:
+        hidden_sizes: [48]
+        depth: 1
+        dropout: 0.05
+        surrogate_type: fast_sigmoid
+        reset_mode: zero
+        beta: 0.95
+        lr: 0.001
+        epochs: 2
+        batch_size: 32
+        training_strategy: multiclass
+        output_dim: 4
+        backend:
+          recurrent_cell_type: lsnn
+          surrogate_family: fast_sigmoid
+          reset_policy: zero
+
+  - name: regime_spikingjelly_temporal_conv
+    model:
+      name: spikingjelly_temporal_conv
+      params:
+        hidden_sizes: [48]
+        depth: 1
+        dropout: 0.05
+        surrogate_type: atan
+        reset_mode: zero
+        beta: 0.95
+        lr: 0.001
+        epochs: 2
+        batch_size: 32
+        training_strategy: multiclass
+        output_dim: 4
+        backend:
+          event_encoding_mode: temporal
+          surrogate_family: atan
+          reset_policy: zero
+
+  # Optional hybrid run if this model is available in your build.
+  # - name: regime_markov_snn_hybrid
+  #   model:
+  #     name: markov_snn_hybrid
+  #     params:
+  #       markov_weight: 0.4
+  #       snn_weight: 0.6
+  #       blend_temperature: 1.0
