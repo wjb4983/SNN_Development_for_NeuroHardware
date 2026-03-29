@@ -29,7 +29,10 @@ class ModelZooInterfaceTest(unittest.TestCase):
         metrics = model.evaluate(x_input, self.y)
 
         self.assertIn("accuracy", metrics)
-        self.assertEqual(proba.shape, (len(self.x),))
+        self.assertEqual(proba.shape[0], len(self.x))
+        if proba.ndim == 2:
+            self.assertGreater(proba.shape[1], 1)
+            self.assertTrue(np.allclose(np.sum(proba, axis=1), 1.0, atol=1e-5))
         self.assertTrue(0.0 <= float(np.min(proba)) <= 1.0)
         self.assertTrue(0.0 <= float(np.max(proba)) <= 1.0)
 
@@ -42,8 +45,7 @@ class ModelZooInterfaceTest(unittest.TestCase):
             reloaded.load_checkpoint(ckpt)
             reloaded_proba = reloaded.predict_proba(x_input)
             self.assertEqual(reloaded_proba.shape, proba.shape)
-            if isinstance(model, TorchSNNAdapter):
-                np.testing.assert_allclose(proba, reloaded_proba, atol=1e-5, rtol=1e-4)
+            np.testing.assert_allclose(proba, reloaded_proba, atol=1e-5, rtol=1e-4)
 
             pred = save_prediction_artifacts(Path(td), model_name, self.y, proba)
             self.assertTrue(pred.exists())
@@ -51,9 +53,14 @@ class ModelZooInterfaceTest(unittest.TestCase):
         self.assertIsInstance(train_info, dict)
 
     def test_baseline_models(self):
-        for model_name in ["naive_persistence", "logreg", "gbm", "mlp"]:
+        for model_name in ["naive_persistence", "logreg", "gbm", "mlp", "markov_discrete", "hmm_gaussian"]:
             with self.subTest(model=model_name):
-                self._assert_model_roundtrip(model_name)
+                params = None
+                if model_name == "markov_discrete":
+                    params = {"n_states": 3, "n_return_bins": 5, "n_vol_bins": 3, "smoothing": 1e-2}
+                elif model_name == "hmm_gaussian":
+                    params = {"n_states": 3, "regularization": 1e-3, "max_iter": 12, "emission_type": "gaussian_diag"}
+                self._assert_model_roundtrip(model_name, params=params)
 
     def test_snn_models_tabular(self):
         sweep = [
