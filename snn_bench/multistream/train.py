@@ -167,6 +167,14 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     x_flat, event_vocab, feature_names = build_feature_matrix(aligned, cfg.dataset.feature)
     y = aligned[y_cols].to_numpy(dtype=np.float32)
     x_flat, y = drop_nan_targets(x_flat, y)
+    if len(x_flat) == 0:
+        max_hz = max(cfg.train.horizons_s) if cfg.train.horizons_s else 0
+        raise ValueError(
+            "no valid multistream training rows after target construction; "
+            f"all rows were dropped (max_horizon_s={max_hz}). "
+            "Check stream CSV timestamps cover enough forward time for label horizons "
+            "and ensure config dataset.streams points to event CSV files."
+        )
 
     n_assets = len(cfg.dataset.streams)
     per_asset_dim = x_flat.shape[1] // n_assets
