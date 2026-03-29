@@ -141,9 +141,8 @@ def cache_market_data(cfg: BenchmarkConfig, stock_years: int, option_years: int,
         symbol_cfg = BenchmarkConfig(
             ticker=symbol,
             timeframe=cfg.timeframe,
-            backtest_root=cfg.backtest_root,
-            snapshot_dir=cfg.snapshot_dir,
             massive_api_key_file=cfg.massive_api_key_file,
+            data_paths=cfg.data_paths,
         )
         summaries.append(
             _cache_single_ticker(
