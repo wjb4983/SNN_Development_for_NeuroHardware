@@ -22,6 +22,7 @@ DOCKER_IMAGE="${DOCKER_IMAGE:-snn-bench:latest}"
 
 RUN_MODEL_TASK_MATRIX="${RUN_MODEL_TASK_MATRIX:-0}"
 MATRIX_MODEL_GROUP="${MATRIX_MODEL_GROUP:-baseline}"
+RUN_TASK_RELEVANT_MATRIX="${RUN_TASK_RELEVANT_MATRIX:-0}"
 
 
 if [[ -z "${MASSIVE_API_KEY:-}" && -z "${MASSIVE_API_KEY_FILE:-}" ]]; then
@@ -136,6 +137,14 @@ if [[ "$RUN_MODEL_TASK_MATRIX" == "1" ]]; then
   MAX_YEARS="$MAX_YEARS" \
   OUT_DIR="$OUT_DIR/matrix" \
   timeout 5400s ./scripts/train_all_models_tasks.sh "$TICKER" "$TIMEFRAME"
+fi
+
+
+if [[ "$RUN_TASK_RELEVANT_MATRIX" == "1" ]]; then
+  echo "[step] Running task-aware model matrix sweep"
+  MAX_YEARS="$MAX_YEARS" \
+  OUT_DIR="$OUT_DIR/task_relevant_matrix" \
+  timeout 5400s ./scripts/train_task_relevant_models.sh "$TICKER" "$TIMEFRAME"
 fi
 
 echo "[done] Pipeline complete"
