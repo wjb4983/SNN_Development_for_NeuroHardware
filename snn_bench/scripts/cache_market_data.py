@@ -53,6 +53,19 @@ def _to_npz_arrays(rows: list[dict]) -> dict[str, np.ndarray]:
     }
 
 
+def _parse_timeframe(timeframe: str) -> tuple[int, str]:
+    tf = timeframe.strip().lower()
+    if tf.endswith("min"):
+        return int(tf[:-3] or "1"), "minute"
+    if tf.endswith("m"):
+        return int(tf[:-1] or "1"), "minute"
+    if tf.endswith("h"):
+        return int(tf[:-1] or "1"), "hour"
+    if tf.endswith("d"):
+        return int(tf[:-1] or "1"), "day"
+    raise ValueError(f"Unsupported timeframe '{timeframe}'. Use values like 1Min, 5Min, 1H, 1D.")
+
+
 def _cache_single_ticker(
     cfg: BenchmarkConfig,
     ticker: str,
@@ -65,8 +78,15 @@ def _cache_single_ticker(
     today = date.today()
     stock_start = today - timedelta(days=365 * stock_years)
     option_start = today - timedelta(days=365 * option_years)
+    tf_multiplier, tf_timespan = _parse_timeframe(cfg.timeframe)
 
-    stock_rows = client.fetch_daily_bars(api_ticker, stock_start, today)
+    stock_rows = client.fetch_bars(
+        api_ticker,
+        stock_start,
+        today,
+        multiplier=tf_multiplier,
+        timespan=tf_timespan,
+    )
     snapshot_path = cfg.data_paths.snapshot_dir / f"{safe_ticker}.json"
     MassiveClient.save_json(snapshot_path, stock_rows)
 
@@ -170,7 +190,7 @@ def parse_args() -> argparse.Namespace:
         choices=("single", "indices", "top100", "all"),
         help="Preset ticker universe to cache",
     )
-    parser.add_argument("--timeframe", default="1D")
+    parser.add_argument("--timeframe", default="1Min")
     parser.add_argument("--stock-years", type=int, default=5)
     parser.add_argument("--option-years", type=int, default=2)
     return parser.parse_args()

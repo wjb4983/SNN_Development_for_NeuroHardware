@@ -23,10 +23,13 @@ class MassiveClient:
             payload = response.read().decode("utf-8")
         return json.loads(payload)
 
-    def fetch_daily_bars(self, ticker: str, start: date, end: date) -> list[dict[str, Any]]:
-        path = f"/v2/aggs/ticker/{ticker}/range/1/day/{start.isoformat()}/{end.isoformat()}"
+    def fetch_bars(self, ticker: str, start: date, end: date, *, multiplier: int = 1, timespan: str = "day") -> list[dict[str, Any]]:
+        path = f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.isoformat()}/{end.isoformat()}"
         data = self._get(path, {"adjusted": "true", "sort": "asc", "limit": 50000})
         return data.get("results", [])
+
+    def fetch_daily_bars(self, ticker: str, start: date, end: date) -> list[dict[str, Any]]:
+        return self.fetch_bars(ticker, start, end, multiplier=1, timespan="day")
 
     def fetch_options_snapshots(self, ticker: str, as_of: date, max_pages: int = 30) -> list[dict[str, Any]]:
         path = f"/v3/snapshot/options/{ticker}"

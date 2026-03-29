@@ -2,7 +2,7 @@
 set -euo pipefail
 
 UNIVERSE="${1:-all}"
-TIMEFRAME="${2:-1D}"
+TIMEFRAME="${2:-1Min}"
 STOCK_YEARS="${3:-5}"
 OPTION_YEARS="${4:-2}"
 TICKER="${5:-}"
