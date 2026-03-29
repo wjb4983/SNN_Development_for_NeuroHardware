@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from snn_bench.hybrid.backtest import run_backtest
 from snn_bench.hybrid.fast_model_snn import FastSNNModel
 from snn_bench.hybrid.feature_pipeline import generate_synthetic_hybrid_data
-from snn_bench.hybrid.fusion import WeightedFusion
+from snn_bench.hybrid.fusion import RegimeAwareFusion, WeightedFusion
 from snn_bench.hybrid.risk_gate import RiskGate
 from snn_bench.hybrid.slow_model_ann import SlowANNModel
 
@@ -63,12 +65,45 @@ def cmd_train_fusion(config_path: Path) -> None:
     cfg = _load_config(config_path)
     out = Path(cfg["artifacts"]["fusion_model_path"])
     fusion_cfg = cfg.get("fusion", {})
-    model = WeightedFusion(
-        slow_weight=float(fusion_cfg.get("slow_weight", 0.55)),
-        fast_weight=float(fusion_cfg.get("fast_weight", 0.45)),
-    )
+    fusion_type = str(fusion_cfg.get("type", "weighted")).lower()
+    if fusion_type == "regime_aware":
+        model = RegimeAwareFusion(
+            slow_weight=float(fusion_cfg.get("slow_weight", 0.55)),
+            fast_weight=float(fusion_cfg.get("fast_weight", 0.45)),
+            regime_conf_sensitivity=float(fusion_cfg.get("regime_conf_sensitivity", 0.7)),
+            low_confidence_threshold=float(fusion_cfg.get("low_confidence_threshold", 0.5)),
+            low_confidence_snn_scale=float(fusion_cfg.get("low_confidence_snn_scale", 0.75)),
+            regime_scale_by_state=fusion_cfg.get("regime_scale_by_state"),
+        )
+    else:
+        model = WeightedFusion(
+            slow_weight=float(fusion_cfg.get("slow_weight", 0.55)),
+            fast_weight=float(fusion_cfg.get("fast_weight", 0.45)),
+        )
     model.save(out)
-    print(json.dumps({"saved": str(out), "method": "weighted_confidence_blend"}))
+    print(json.dumps({"saved": str(out), "method": fusion_type}))
+
+
+def _load_fusion_model(path: Path) -> WeightedFusion | RegimeAwareFusion:
+    with path.open("rb") as f:
+        state = pickle.load(f)
+    if state.get("fusion_type") == "regime_aware":
+        return RegimeAwareFusion.load(path)
+    return WeightedFusion.load(path)
+
+
+def _load_markov_posteriors(path: Path, expected_rows: int) -> np.ndarray:
+    if path.suffix == ".npy":
+        posterior = np.load(path)
+    else:
+        payload = np.load(path)
+        key = "posterior" if "posterior" in payload else "regime_posteriors"
+        posterior = payload[key]
+    if posterior.shape[0] != expected_rows:
+        raise ValueError(
+            f"Markov posterior rows ({posterior.shape[0]}) must match backtest rows ({expected_rows})"
+        )
+    return posterior.astype(np.float32)
 
 
 def cmd_backtest_hybrid(config_path: Path) -> None:
@@ -78,7 +113,7 @@ def cmd_backtest_hybrid(config_path: Path) -> None:
 
     slow = SlowANNModel.load(Path(artifacts["slow_model_path"]))
     fast = FastSNNModel.load(Path(artifacts["fast_model_path"]))
-    fusion = WeightedFusion.load(Path(artifacts["fusion_model_path"]))
+    fusion = _load_fusion_model(Path(artifacts["fusion_model_path"]))
 
     slow_pred = slow.predict(ds.slow_features)
     fast_pred = fast.predict(ds.fast_features)
@@ -93,12 +128,32 @@ def cmd_backtest_hybrid(config_path: Path) -> None:
     )
     gate_out = gate.evaluate(ds.market, ds.fast_features)
 
-    fused = fusion.blend(
-        slow_score=slow_pred.score,
-        slow_conf=slow_pred.confidence,
-        fast_score=fast_pred.score,
-        fast_conf=fast_pred.confidence,
-    )
+    regime_cfg = cfg.get("regime_fusion", {})
+    markov_path = regime_cfg.get("markov_posterior_path")
+    calibration_path = regime_cfg.get("calibration_weights_path")
+    posteriors = None
+    calibration_weights = None
+    if markov_path:
+        posteriors = _load_markov_posteriors(Path(markov_path), expected_rows=len(ds.market))
+    if calibration_path:
+        calibration_weights = _load_markov_posteriors(Path(calibration_path), expected_rows=len(ds.market))
+
+    if isinstance(fusion, RegimeAwareFusion):
+        fused = fusion.blend(
+            slow_score=slow_pred.score,
+            slow_conf=slow_pred.confidence,
+            fast_score=fast_pred.score,
+            fast_conf=fast_pred.confidence,
+            regime_posteriors=posteriors,
+            calibration_weights=calibration_weights,
+        )
+    else:
+        fused = fusion.blend(
+            slow_score=slow_pred.score,
+            slow_conf=slow_pred.confidence,
+            fast_score=fast_pred.score,
+            fast_conf=fast_pred.confidence,
+        )
 
     bt_cfg = cfg.get("backtest", {})
     bt = run_backtest(
