@@ -38,6 +38,13 @@ def _window_tensor(x: np.ndarray, y: np.ndarray, seq_len: int = 32) -> tuple[np.
     return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
 
 
+def _adaptive_seq_len(n_rows: int, preferred: int = 32) -> int:
+    if n_rows <= 1:
+        return 1
+    # Keep context reasonably long when possible, but never longer than the data allows.
+    return max(1, min(preferred, n_rows - 1))
+
+
 def _walk_forward_indices(n: int, folds: int, train_ratio: float, val_ratio: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     if n < 3 or folds <= 0:
         return []
@@ -73,6 +80,21 @@ def _walk_forward_indices(n: int, folds: int, train_ratio: float, val_ratio: flo
             continue
         splits.append((train_idx, val_idx, test_idx))
     return splits
+
+
+def _fallback_split_indices(n: int, train_ratio: float, val_ratio: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    if n < 3:
+        return []
+    tr_end = int(n * train_ratio)
+    va_end = tr_end + int(n * val_ratio)
+    tr_end = min(max(1, tr_end), n - 2)
+    va_end = min(max(tr_end + 1, va_end), n - 1)
+    train_idx = np.arange(0, tr_end)
+    val_idx = np.arange(tr_end, va_end)
+    test_idx = np.arange(va_end, n)
+    if min(len(train_idx), len(val_idx), len(test_idx)) == 0:
+        return []
+    return [(train_idx, val_idx, test_idx)]
 
 
 def _train_one(
@@ -149,11 +171,17 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     n_assets = len(cfg.dataset.streams)
     per_asset_dim = x_flat.shape[1] // n_assets
     x = x_flat[:, : per_asset_dim * n_assets].reshape(len(x_flat), n_assets, per_asset_dim)
-    x_seq, y_seq = _window_tensor(x, y)
+    seq_len = _adaptive_seq_len(len(x), preferred=32)
+    x_seq, y_seq = _window_tensor(x, y, seq_len=seq_len)
 
     splits = _walk_forward_indices(len(x_seq), cfg.train.walk_forward_folds, cfg.train.train_ratio, cfg.train.val_ratio)
     if not splits:
-        raise ValueError("walk-forward split produced no folds; increase data size")
+        splits = _fallback_split_indices(len(x_seq), cfg.train.train_ratio, cfg.train.val_ratio)
+    if not splits:
+        raise ValueError(
+            f"walk-forward split produced no folds after fallback "
+            f"(rows={len(x)}, windowed_rows={len(x_seq)}, seq_len={seq_len}); increase data size"
+        )
 
     fold_reports = []
     for fold_id, (tr, va, te) in enumerate(splits):

@@ -4,7 +4,7 @@ set -euo pipefail
 CFG="${1:-snn_bench/configs/runs/multistream_cross_asset_example.yaml}"
 
 DATA_DIR="examples/multistream_data"
-MIN_ROWS=200
+MIN_ROWS=5000
 
 if ! timeout 30s python - "$DATA_DIR" "$MIN_ROWS" <<'PY'
 from __future__ import annotations
