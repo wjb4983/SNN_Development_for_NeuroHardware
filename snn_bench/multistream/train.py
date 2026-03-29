@@ -163,7 +163,18 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     streams = load_event_streams(cfg.dataset)
     aligned = causal_synchronize(streams, cfg.dataset.target_asset)
     aligned = make_multi_horizon_targets(aligned, cfg.train.horizons_s)
-    y_cols = [f"y_{hz}s_direction" for hz in cfg.train.horizons_s]
+    finite_counts: dict[int, int] = {}
+    for hz in cfg.train.horizons_s:
+        col = f"y_{hz}s_direction"
+        finite_counts[int(hz)] = int(np.isfinite(aligned[col].to_numpy(dtype=np.float32)).sum())
+    selected_horizons = tuple(int(hz) for hz in cfg.train.horizons_s if finite_counts.get(int(hz), 0) >= 64)
+    if not selected_horizons:
+        raise ValueError(
+            "no target horizon has enough finite labels; "
+            f"finite_label_counts={finite_counts}. "
+            "Recache denser data or reduce horizons."
+        )
+    y_cols = [f"y_{hz}s_direction" for hz in selected_horizons]
     x_flat, event_vocab, feature_names = build_feature_matrix(aligned, cfg.dataset.feature)
     y = aligned[y_cols].to_numpy(dtype=np.float32)
     x_flat, y = drop_nan_targets(x_flat, y)
@@ -202,7 +213,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
                 fusion_dim=cfg.model.fusion_dim,
                 decay=cfg.model.recurrent_decay,
                 top_k_edges=cfg.model.top_k_edges,
-                n_horizons=len(cfg.train.horizons_s),
+                n_horizons=len(selected_horizons),
             )
             is_snn = True
         else:
@@ -210,7 +221,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
                 per_asset_dim=per_asset_dim,
                 n_assets=n_assets,
                 hidden_dim=cfg.model.hidden_dim,
-                n_horizons=len(cfg.train.horizons_s),
+                n_horizons=len(selected_horizons),
                 mode=ann_mode,
             )
             is_snn = False
@@ -236,7 +247,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
             probs = torch.sigmoid(logits).detach().cpu().numpy()
 
         horizon_metrics = {}
-        for i, hz in enumerate(cfg.train.horizons_s):
+        for i, hz in enumerate(selected_horizons):
             dm = directional_metrics(yt[:, i].astype(int), probs[:, i])
             pm = pnl_proxy(yt[:, i], probs[:, i], transaction_cost_bps=cfg.train.transaction_cost_bps)
             horizon_metrics[f"{hz}s"] = {**dm, **pm}
@@ -261,6 +272,8 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     out_path = out_dir / "metrics.json"
     payload = {
         "config": asdict(cfg),
+        "effective_horizons_s": list(selected_horizons),
+        "finite_label_counts": finite_counts,
         "event_vocab": event_vocab,
         "feature_names": feature_names,
         "fold_reports": fold_reports,
