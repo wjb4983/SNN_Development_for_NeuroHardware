@@ -16,6 +16,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 cfg_path = Path(sys.argv[1])
@@ -23,6 +24,7 @@ snapshot_dir = Path(sys.argv[2])
 min_rows = int(sys.argv[3])
 assets = ("SPY", "QQQ", "DIA", "IWM")
 streams = []
+target_ts = None
 
 for asset in assets:
     path = snapshot_dir / f"{asset}.json"
@@ -38,7 +40,39 @@ for asset in assets:
             f"[multistream_ablation] {path} has only {len(payload)} rows (< {min_rows}). "
             "Re-cache with minute candles, e.g. scripts/cache_market_data.sh all 1Min 1 1"
         )
+    # Validate aggregate bar shape to avoid silent all-NaN targets later.
+    sample = payload[0]
+    if not isinstance(sample, dict) or "t" not in sample or "c" not in sample:
+        raise SystemExit(
+            f"[multistream_ablation] {path} does not look like aggregate bar rows "
+            "(missing 't'/'c'). Re-cache this symbol with minute candles."
+        )
+    if asset == "SPY":
+        ts = np.asarray([row.get("t") for row in payload], dtype=np.float64)
+        ts = ts[np.isfinite(ts)]
+        if len(ts) < min_rows:
+            raise SystemExit(
+                f"[multistream_ablation] {path} has insufficient finite timestamps. "
+                "Re-cache this symbol with minute candles."
+            )
+        target_ts = np.sort(ts.astype(np.int64))
     streams.append({"asset": asset, "path": str(path), "max_staleness_ms": 120000})
+
+if target_ts is None:
+    raise SystemExit("[multistream_ablation] target timestamps unavailable for SPY.")
+
+# Ensure requested horizons can actually produce labels for the target stream.
+max_horizon_s = 300
+future = target_ts + int(max_horizon_s * 1000)
+idx = np.searchsorted(target_ts, future, side="left")
+valid_label_rows = int((idx < len(target_ts)).sum())
+if valid_label_rows < 64:
+    raise SystemExit(
+        "[multistream_ablation] cached SPY bars cannot produce enough forward labels "
+        f"for horizon {max_horizon_s}s (valid_rows={valid_label_rows}). "
+        "This usually means stale/corrupt timestamps in src/data/SPY.json. "
+        "Delete SPY/QQQ/DIA/IWM JSON and re-run: scripts/cache_market_data.sh all 1Min 1 1"
+    )
 
 cfg = {
     "dataset": {

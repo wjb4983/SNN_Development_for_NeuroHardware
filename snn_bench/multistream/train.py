@@ -173,7 +173,8 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
             "no valid multistream training rows after target construction; "
             f"all rows were dropped (max_horizon_s={max_hz}). "
             "Check stream CSV timestamps cover enough forward time for label horizons "
-            "and ensure config dataset.streams points to event CSV files."
+            "and ensure config dataset.streams points to supported event sources "
+            "(.csv, .json, or .npz)."
         )
 
     n_assets = len(cfg.dataset.streams)
