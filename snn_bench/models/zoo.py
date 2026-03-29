@@ -303,6 +303,273 @@ class SklearnModelAdapter(UnifiedModel):
         self.estimator = joblib.load(path)
 
 
+class DiscreteMarkovChainAdapter(UnifiedModel):
+    def __init__(
+        self,
+        *,
+        n_states: int = 2,
+        n_return_bins: int = 6,
+        n_vol_bins: int = 4,
+        smoothing: float = 1e-2,
+    ) -> None:
+        if int(n_states) < 2:
+            raise ValueError("n_states must be >= 2 for DiscreteMarkovChainAdapter")
+        if int(n_return_bins) < 1 or int(n_vol_bins) < 1:
+            raise ValueError("n_return_bins and n_vol_bins must both be >= 1")
+        if float(smoothing) <= 0.0:
+            raise ValueError("smoothing must be > 0")
+        self.n_states = int(n_states)
+        self.n_return_bins = int(n_return_bins)
+        self.n_vol_bins = int(n_vol_bins)
+        self.smoothing = float(smoothing)
+        self.n_obs_states = self.n_return_bins * self.n_vol_bins
+        self.return_edges: np.ndarray | None = None
+        self.vol_edges: np.ndarray | None = None
+        self.transition_matrix = np.full((self.n_obs_states, self.n_obs_states), 1.0 / self.n_obs_states, dtype=np.float64)
+        self.regime_given_obs = np.full((self.n_obs_states, self.n_states), 1.0 / self.n_states, dtype=np.float64)
+        self.regime_prior = np.full((self.n_states,), 1.0 / self.n_states, dtype=np.float64)
+
+    def _features_for_discretization(self, x: np.ndarray) -> np.ndarray:
+        x_arr = np.asarray(x, dtype=np.float64)
+        if x_arr.ndim == 3:
+            ret_feat = x_arr[:, :, 0].mean(axis=1)
+            vol_feat = x_arr[:, :, 0].std(axis=1)
+            return np.stack([ret_feat, vol_feat], axis=1)
+        if x_arr.ndim != 2 or x_arr.shape[1] < 2:
+            raise ValueError("DiscreteMarkovChainAdapter expects 2D features with at least 2 columns, or 3D temporal features")
+        return x_arr[:, :2]
+
+    def _digitize(self, x: np.ndarray) -> np.ndarray:
+        if self.return_edges is None or self.vol_edges is None:
+            raise ValueError("Model must be fitted before predict_proba")
+        feats = self._features_for_discretization(x)
+        r_idx = np.digitize(feats[:, 0], self.return_edges[1:-1], right=False)
+        v_idx = np.digitize(feats[:, 1], self.vol_edges[1:-1], right=False)
+        return (r_idx * self.n_vol_bins + v_idx).astype(np.int64)
+
+    def fit(self, x_train: np.ndarray, y_train: np.ndarray, **kwargs: Any) -> dict[str, Any]:
+        y = np.asarray(y_train).reshape(-1).astype(np.int64)
+        if y.size == 0:
+            raise ValueError("DiscreteMarkovChainAdapter requires non-empty labels")
+        if np.min(y) < 0 or np.max(y) >= self.n_states:
+            raise ValueError(f"y labels must be in [0, {self.n_states - 1}] for n_states={self.n_states}")
+        feats = self._features_for_discretization(x_train)
+        self.return_edges = np.quantile(feats[:, 0], q=np.linspace(0.0, 1.0, self.n_return_bins + 1))
+        self.vol_edges = np.quantile(feats[:, 1], q=np.linspace(0.0, 1.0, self.n_vol_bins + 1))
+        obs = self._digitize(x_train)
+
+        trans = np.full((self.n_obs_states, self.n_obs_states), self.smoothing, dtype=np.float64)
+        for i in range(1, len(obs)):
+            trans[obs[i - 1], obs[i]] += 1.0
+        self.transition_matrix = trans / np.maximum(trans.sum(axis=1, keepdims=True), 1e-12)
+
+        reg = np.full((self.n_obs_states, self.n_states), self.smoothing, dtype=np.float64)
+        for o, cls in zip(obs, y, strict=False):
+            reg[o, cls] += 1.0
+        self.regime_given_obs = reg / np.maximum(reg.sum(axis=1, keepdims=True), 1e-12)
+
+        prior = np.bincount(y, minlength=self.n_states).astype(np.float64) + self.smoothing
+        self.regime_prior = prior / np.maximum(prior.sum(), 1e-12)
+        return {
+            "train_samples": int(len(y)),
+            "n_states": self.n_states,
+            "n_obs_states": self.n_obs_states,
+        }
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        obs = self._digitize(x)
+        probs = self.regime_given_obs[obs]
+        probs = 0.95 * probs + 0.05 * self.regime_prior[None, :]
+        probs = probs / np.maximum(probs.sum(axis=1, keepdims=True), 1e-12)
+        if probs.shape[1] == 2:
+            return probs[:, 1].astype(np.float32)
+        return probs.astype(np.float32)
+
+    def save_checkpoint(self, path: Path) -> None:
+        with path.open("wb") as f:
+            np.savez(
+                f,
+                n_states=np.array(self.n_states, dtype=np.int64),
+                n_return_bins=np.array(self.n_return_bins, dtype=np.int64),
+                n_vol_bins=np.array(self.n_vol_bins, dtype=np.int64),
+                smoothing=np.array(self.smoothing, dtype=np.float64),
+                return_edges=np.asarray(self.return_edges, dtype=np.float64),
+                vol_edges=np.asarray(self.vol_edges, dtype=np.float64),
+                transition_matrix=self.transition_matrix,
+                regime_given_obs=self.regime_given_obs,
+                regime_prior=self.regime_prior,
+            )
+
+    def load_checkpoint(self, path: Path) -> None:
+        with np.load(path, allow_pickle=False) as ckpt:
+            self.n_states = int(ckpt["n_states"])
+            self.n_return_bins = int(ckpt["n_return_bins"])
+            self.n_vol_bins = int(ckpt["n_vol_bins"])
+            self.smoothing = float(ckpt["smoothing"])
+            self.return_edges = ckpt["return_edges"].astype(np.float64)
+            self.vol_edges = ckpt["vol_edges"].astype(np.float64)
+            self.transition_matrix = ckpt["transition_matrix"].astype(np.float64)
+            self.regime_given_obs = ckpt["regime_given_obs"].astype(np.float64)
+            self.regime_prior = ckpt["regime_prior"].astype(np.float64)
+        self.n_obs_states = self.n_return_bins * self.n_vol_bins
+
+
+class HiddenMarkovAdapter(UnifiedModel):
+    def __init__(
+        self,
+        *,
+        n_states: int = 2,
+        smoothing: float = 1e-2,
+        regularization: float = 1e-3,
+        emission_type: str = "gaussian_diag",
+        max_iter: int = 25,
+        tol: float = 1e-4,
+        seed: int = 7,
+    ) -> None:
+        emission = str(emission_type).lower()
+        if int(n_states) < 2:
+            raise ValueError("n_states must be >= 2 for HiddenMarkovAdapter")
+        if float(smoothing) <= 0.0:
+            raise ValueError("smoothing must be > 0")
+        if float(regularization) <= 0.0:
+            raise ValueError("regularization must be > 0")
+        if emission not in {"gaussian", "gaussian_diag"}:
+            raise ValueError("emission_type must be one of {'gaussian', 'gaussian_diag'}")
+        if int(max_iter) < 1:
+            raise ValueError("max_iter must be >= 1")
+        if float(tol) <= 0.0:
+            raise ValueError("tol must be > 0")
+
+        self.n_states = int(n_states)
+        self.smoothing = float(smoothing)
+        self.regularization = float(regularization)
+        self.emission_type = "gaussian_diag"
+        self.max_iter = int(max_iter)
+        self.tol = float(tol)
+        self.seed = int(seed)
+
+        self.n_features = 0
+        self.n_regimes = self.n_states
+        self.state_priors = np.full((self.n_states,), 1.0 / self.n_states, dtype=np.float64)
+        self.transition_matrix = np.full((self.n_states, self.n_states), 1.0 / self.n_states, dtype=np.float64)
+        self.means = np.zeros((self.n_states, 1), dtype=np.float64)
+        self.vars = np.ones((self.n_states, 1), dtype=np.float64)
+        self.state_to_regime = np.full((self.n_states, self.n_regimes), 1.0 / self.n_regimes, dtype=np.float64)
+
+    def _as_feature_matrix(self, x: np.ndarray) -> np.ndarray:
+        x_arr = np.asarray(x, dtype=np.float64)
+        if x_arr.ndim == 3:
+            return x_arr.mean(axis=1)
+        if x_arr.ndim != 2:
+            raise ValueError("HiddenMarkovAdapter expects 2D features or 3D temporal features")
+        return x_arr
+
+    def _log_gaussian(self, x: np.ndarray) -> np.ndarray:
+        diff = x[:, None, :] - self.means[None, :, :]
+        scaled = (diff * diff) / np.maximum(self.vars[None, :, :], 1e-12)
+        log_det = np.log(2.0 * np.pi * np.maximum(self.vars, 1e-12)).sum(axis=1)
+        return -0.5 * (scaled.sum(axis=2) + log_det[None, :])
+
+    def fit(self, x_train: np.ndarray, y_train: np.ndarray, **kwargs: Any) -> dict[str, Any]:
+        x = self._as_feature_matrix(x_train)
+        y = np.asarray(y_train).reshape(-1).astype(np.int64)
+        if x.shape[0] == 0:
+            raise ValueError("HiddenMarkovAdapter requires non-empty training data")
+        if x.shape[0] != y.shape[0]:
+            raise ValueError("x_train and y_train must have the same number of rows")
+        if np.min(y) < 0:
+            raise ValueError("y labels must be non-negative integers")
+
+        self.n_features = x.shape[1]
+        self.n_regimes = int(max(np.max(y) + 1, self.n_states))
+        rng = np.random.default_rng(int(kwargs.get("seed", self.seed)))
+        init_idx = rng.choice(x.shape[0], size=self.n_states, replace=x.shape[0] < self.n_states)
+        self.means = x[init_idx].astype(np.float64)
+        self.vars = np.full((self.n_states, self.n_features), np.var(x, axis=0) + self.regularization, dtype=np.float64)
+        self.state_priors = np.full((self.n_states,), 1.0 / self.n_states, dtype=np.float64)
+
+        prev_ll = -np.inf
+        max_iter = int(kwargs.get("max_iter", self.max_iter))
+        for _ in range(max_iter):
+            log_prob = self._log_gaussian(x) + np.log(np.maximum(self.state_priors[None, :], 1e-12))
+            log_norm = np.logaddexp.reduce(log_prob, axis=1, keepdims=True)
+            resp = np.exp(log_prob - log_norm)
+            ll = float(log_norm.sum())
+            if abs(ll - prev_ll) < self.tol:
+                break
+            prev_ll = ll
+
+            nk = resp.sum(axis=0) + self.smoothing
+            self.state_priors = nk / np.maximum(nk.sum(), 1e-12)
+            self.means = (resp.T @ x) / np.maximum(nk[:, None], 1e-12)
+            diff = x[:, None, :] - self.means[None, :, :]
+            self.vars = (resp[:, :, None] * (diff * diff)).sum(axis=0) / np.maximum(nk[:, None], 1e-12)
+            self.vars = np.maximum(self.vars, self.regularization)
+
+        state_idx = np.argmax(resp, axis=1)
+        trans = np.full((self.n_states, self.n_states), self.smoothing, dtype=np.float64)
+        for i in range(1, len(state_idx)):
+            trans[state_idx[i - 1], state_idx[i]] += 1.0
+        self.transition_matrix = trans / np.maximum(trans.sum(axis=1, keepdims=True), 1e-12)
+
+        reg = np.full((self.n_states, self.n_regimes), self.smoothing, dtype=np.float64)
+        for s, cls in zip(state_idx, y, strict=False):
+            reg[s, cls] += 1.0
+        self.state_to_regime = reg / np.maximum(reg.sum(axis=1, keepdims=True), 1e-12)
+
+        return {"train_samples": int(len(y)), "n_states": self.n_states, "n_regimes": self.n_regimes}
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        if self.n_features <= 0:
+            raise ValueError("Model must be fitted before predict_proba")
+        xm = self._as_feature_matrix(x)
+        if xm.shape[1] != self.n_features:
+            raise ValueError(f"Expected {self.n_features} features, got {xm.shape[1]}")
+        log_prob = self._log_gaussian(xm) + np.log(np.maximum(self.state_priors[None, :], 1e-12))
+        log_norm = np.logaddexp.reduce(log_prob, axis=1, keepdims=True)
+        resp = np.exp(log_prob - log_norm)
+        regime_probs = resp @ self.state_to_regime
+        regime_probs = regime_probs / np.maximum(regime_probs.sum(axis=1, keepdims=True), 1e-12)
+        if regime_probs.shape[1] == 2:
+            return regime_probs[:, 1].astype(np.float32)
+        return regime_probs.astype(np.float32)
+
+    def save_checkpoint(self, path: Path) -> None:
+        with path.open("wb") as f:
+            np.savez(
+                f,
+                n_states=np.array(self.n_states, dtype=np.int64),
+                smoothing=np.array(self.smoothing, dtype=np.float64),
+                regularization=np.array(self.regularization, dtype=np.float64),
+                max_iter=np.array(self.max_iter, dtype=np.int64),
+                tol=np.array(self.tol, dtype=np.float64),
+                seed=np.array(self.seed, dtype=np.int64),
+                n_features=np.array(self.n_features, dtype=np.int64),
+                n_regimes=np.array(self.n_regimes, dtype=np.int64),
+                state_priors=self.state_priors,
+                transition_matrix=self.transition_matrix,
+                means=self.means,
+                vars=self.vars,
+                state_to_regime=self.state_to_regime,
+            )
+
+    def load_checkpoint(self, path: Path) -> None:
+        with np.load(path, allow_pickle=False) as ckpt:
+            self.n_states = int(ckpt["n_states"])
+            self.smoothing = float(ckpt["smoothing"])
+            self.regularization = float(ckpt["regularization"])
+            self.max_iter = int(ckpt["max_iter"])
+            self.tol = float(ckpt["tol"])
+            self.seed = int(ckpt["seed"])
+            self.n_features = int(ckpt["n_features"])
+            self.n_regimes = int(ckpt["n_regimes"])
+            self.state_priors = ckpt["state_priors"].astype(np.float64)
+            self.transition_matrix = ckpt["transition_matrix"].astype(np.float64)
+            self.means = ckpt["means"].astype(np.float64)
+            self.vars = ckpt["vars"].astype(np.float64)
+            self.state_to_regime = ckpt["state_to_regime"].astype(np.float64)
+
+
 class TorchSNNAdapter(UnifiedModel):
     def __init__(
         self,
@@ -737,6 +1004,25 @@ class ModelZoo:
 
         if n in {"naive_persistence", "persistence"}:
             return NaivePersistenceAdapter(confidence=float(p.get("confidence", 0.7)))
+
+        if n in {"markov_chain", "markov_discrete"}:
+            return DiscreteMarkovChainAdapter(
+                n_states=int(p.get("n_states", 2)),
+                n_return_bins=int(p.get("n_return_bins", 6)),
+                n_vol_bins=int(p.get("n_vol_bins", 4)),
+                smoothing=float(p.get("smoothing", 1e-2)),
+            )
+
+        if n in {"hmm_gaussian", "hidden_markov"}:
+            return HiddenMarkovAdapter(
+                n_states=int(p.get("n_states", 2)),
+                smoothing=float(p.get("smoothing", 1e-2)),
+                regularization=float(p.get("regularization", 1e-3)),
+                emission_type=str(p.get("emission_type", "gaussian_diag")),
+                max_iter=int(p.get("max_iter", 25)),
+                tol=float(p.get("tol", 1e-4)),
+                seed=int(p.get("seed", 7)),
+            )
 
         if n in {"xgboost", "gbm", "gradient_boosting"}:
             try:
