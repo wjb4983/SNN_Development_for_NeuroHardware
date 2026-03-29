@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,10 +13,65 @@ from snn_bench.multistream.schema import DatasetConfig
 REQUIRED_COLS = {"timestamp", "event_type", "price", "size", "side"}
 
 
+def _bars_to_event_frame(rows: list[dict]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=sorted(REQUIRED_COLS))
+    out = pd.DataFrame(rows)
+    if "timestamp" not in out.columns:
+        if "t" in out.columns:
+            out["timestamp"] = pd.to_datetime(out["t"], unit="ms", utc=True)
+        else:
+            raise ValueError("bar payload missing timestamp field ('timestamp' or 't')")
+    if "price" not in out.columns:
+        if "c" in out.columns:
+            out["price"] = out["c"]
+        else:
+            raise ValueError("bar payload missing price field ('price' or 'c')")
+    if "size" not in out.columns:
+        out["size"] = out.get("v", 0.0)
+    if "event_type" not in out.columns:
+        out["event_type"] = "trade"
+    if "side" not in out.columns:
+        open_col = out["o"] if "o" in out.columns else out["price"]
+        out["side"] = np.where(out["price"] >= open_col, "buy", "sell")
+    return out[["timestamp", "event_type", "price", "size", "side"]]
+
+
+def _load_stream_frame(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    if suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "results" in payload:
+            payload = payload["results"]
+        if not isinstance(payload, list):
+            raise ValueError(f"json stream {path} must contain a list of rows")
+        return _bars_to_event_frame(payload)
+    if suffix == ".npz":
+        arrays = np.load(path)
+        rows = [
+            {
+                "t": int(ts),
+                "o": float(op),
+                "c": float(cp),
+                "v": float(vol),
+            }
+            for ts, op, cp, vol in zip(
+                arrays.get("t", np.array([])),
+                arrays.get("o", np.array([])),
+                arrays.get("c", np.array([])),
+                arrays.get("v", np.array([])),
+            )
+        ]
+        return _bars_to_event_frame(rows)
+    raise ValueError(f"unsupported stream format for {path}; use .csv, .json, or .npz")
+
+
 def load_event_streams(cfg: DatasetConfig) -> dict[str, pd.DataFrame]:
     streams: dict[str, pd.DataFrame] = {}
     for stream_cfg in cfg.streams:
-        frame = pd.read_csv(stream_cfg.path)
+        frame = _load_stream_frame(stream_cfg.path)
         missing = REQUIRED_COLS.difference(frame.columns)
         if missing:
             raise ValueError(f"stream {stream_cfg.asset} missing columns: {sorted(missing)}")

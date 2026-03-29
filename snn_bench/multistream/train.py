@@ -38,6 +38,13 @@ def _window_tensor(x: np.ndarray, y: np.ndarray, seq_len: int = 32) -> tuple[np.
     return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
 
 
+def _adaptive_seq_len(n_rows: int, preferred: int = 32) -> int:
+    if n_rows <= 1:
+        return 1
+    # Keep context reasonably long when possible, but never longer than the data allows.
+    return max(1, min(preferred, n_rows - 1))
+
+
 def _walk_forward_indices(n: int, folds: int, train_ratio: float, val_ratio: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     if n < 3 or folds <= 0:
         return []
@@ -73,6 +80,21 @@ def _walk_forward_indices(n: int, folds: int, train_ratio: float, val_ratio: flo
             continue
         splits.append((train_idx, val_idx, test_idx))
     return splits
+
+
+def _fallback_split_indices(n: int, train_ratio: float, val_ratio: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    if n < 3:
+        return []
+    tr_end = int(n * train_ratio)
+    va_end = tr_end + int(n * val_ratio)
+    tr_end = min(max(1, tr_end), n - 2)
+    va_end = min(max(tr_end + 1, va_end), n - 1)
+    train_idx = np.arange(0, tr_end)
+    val_idx = np.arange(tr_end, va_end)
+    test_idx = np.arange(va_end, n)
+    if min(len(train_idx), len(val_idx), len(test_idx)) == 0:
+        return []
+    return [(train_idx, val_idx, test_idx)]
 
 
 def _train_one(
@@ -141,19 +163,45 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     streams = load_event_streams(cfg.dataset)
     aligned = causal_synchronize(streams, cfg.dataset.target_asset)
     aligned = make_multi_horizon_targets(aligned, cfg.train.horizons_s)
-    y_cols = [f"y_{hz}s_direction" for hz in cfg.train.horizons_s]
+    finite_counts: dict[int, int] = {}
+    for hz in cfg.train.horizons_s:
+        col = f"y_{hz}s_direction"
+        finite_counts[int(hz)] = int(np.isfinite(aligned[col].to_numpy(dtype=np.float32)).sum())
+    selected_horizons = tuple(int(hz) for hz in cfg.train.horizons_s if finite_counts.get(int(hz), 0) >= 64)
+    if not selected_horizons:
+        raise ValueError(
+            "no target horizon has enough finite labels; "
+            f"finite_label_counts={finite_counts}. "
+            "Recache denser data or reduce horizons."
+        )
+    y_cols = [f"y_{hz}s_direction" for hz in selected_horizons]
     x_flat, event_vocab, feature_names = build_feature_matrix(aligned, cfg.dataset.feature)
     y = aligned[y_cols].to_numpy(dtype=np.float32)
     x_flat, y = drop_nan_targets(x_flat, y)
+    if len(x_flat) == 0:
+        max_hz = max(cfg.train.horizons_s) if cfg.train.horizons_s else 0
+        raise ValueError(
+            "no valid multistream training rows after target construction; "
+            f"all rows were dropped (max_horizon_s={max_hz}). "
+            "Check stream CSV timestamps cover enough forward time for label horizons "
+            "and ensure config dataset.streams points to supported event sources "
+            "(.csv, .json, or .npz)."
+        )
 
     n_assets = len(cfg.dataset.streams)
     per_asset_dim = x_flat.shape[1] // n_assets
     x = x_flat[:, : per_asset_dim * n_assets].reshape(len(x_flat), n_assets, per_asset_dim)
-    x_seq, y_seq = _window_tensor(x, y)
+    seq_len = _adaptive_seq_len(len(x), preferred=32)
+    x_seq, y_seq = _window_tensor(x, y, seq_len=seq_len)
 
     splits = _walk_forward_indices(len(x_seq), cfg.train.walk_forward_folds, cfg.train.train_ratio, cfg.train.val_ratio)
     if not splits:
-        raise ValueError("walk-forward split produced no folds; increase data size")
+        splits = _fallback_split_indices(len(x_seq), cfg.train.train_ratio, cfg.train.val_ratio)
+    if not splits:
+        raise ValueError(
+            f"walk-forward split produced no folds after fallback "
+            f"(rows={len(x)}, windowed_rows={len(x_seq)}, seq_len={seq_len}); increase data size"
+        )
 
     fold_reports = []
     for fold_id, (tr, va, te) in enumerate(splits):
@@ -165,7 +213,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
                 fusion_dim=cfg.model.fusion_dim,
                 decay=cfg.model.recurrent_decay,
                 top_k_edges=cfg.model.top_k_edges,
-                n_horizons=len(cfg.train.horizons_s),
+                n_horizons=len(selected_horizons),
             )
             is_snn = True
         else:
@@ -173,7 +221,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
                 per_asset_dim=per_asset_dim,
                 n_assets=n_assets,
                 hidden_dim=cfg.model.hidden_dim,
-                n_horizons=len(cfg.train.horizons_s),
+                n_horizons=len(selected_horizons),
                 mode=ann_mode,
             )
             is_snn = False
@@ -199,7 +247,7 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
             probs = torch.sigmoid(logits).detach().cpu().numpy()
 
         horizon_metrics = {}
-        for i, hz in enumerate(cfg.train.horizons_s):
+        for i, hz in enumerate(selected_horizons):
             dm = directional_metrics(yt[:, i].astype(int), probs[:, i])
             pm = pnl_proxy(yt[:, i], probs[:, i], transaction_cost_bps=cfg.train.transaction_cost_bps)
             horizon_metrics[f"{hz}s"] = {**dm, **pm}
@@ -224,6 +272,8 @@ def run_experiment(config_path: Path, *, model_type: str = "snn", ann_mode: str 
     out_path = out_dir / "metrics.json"
     payload = {
         "config": asdict(cfg),
+        "effective_horizons_s": list(selected_horizons),
+        "finite_label_counts": finite_counts,
         "event_vocab": event_vocab,
         "feature_names": feature_names,
         "fold_reports": fold_reports,
