@@ -1,0 +1,15 @@
+task_name: regime_classification
+enabled: true
+type: classification
+horizon_minutes: 30
+labeling:
+  classes: [trend, mean_revert, high_vol, low_vol]
+  trend_threshold_bps: 8.0
+  vol_state_quantile: 0.6
+  rolling_vol_window: 20
+  breadth_window: 15
+evaluation:
+  primary_ml_metric: f1_macro
+  primary_trading_metric: regime_conditioned_sharpe
+  ml_metrics: [f1_macro, regime_precision]
+  trading_metrics: [regime_conditioned_sharpe]

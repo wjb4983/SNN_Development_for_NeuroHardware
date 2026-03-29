@@ -45,6 +45,7 @@ class TaskRegistry:
             "realized_vol_30m": self._build_realized_vol,
             "options_iv_skew_movement": self._build_options_iv_skew,
             "next_bar_direction": self._build_next_bar_direction,
+            "regime_classification": self._build_regime_classification,
         }
 
     def available_tasks(self) -> list[str]:
@@ -82,6 +83,13 @@ class TaskRegistry:
             raise ValueError(f"Task '{spec.name}' produced an empty dataset")
         if len(x) != len(y):
             raise ValueError("Feature/label rows are not aligned")
+        if spec.name == "regime_classification":
+            unique = np.unique(y)
+            if unique.size < 2:
+                raise ValueError(
+                    f"Task '{spec.name}' produced only a single class label ({int(unique[0])}). "
+                    "Check task thresholds or input data variability."
+                )
         return x.astype(np.float32), y
 
     def _find_by_task_name(self, task_name: str) -> Path | None:
@@ -143,6 +151,42 @@ class TaskRegistry:
         keep = aligned.index.to_numpy(dtype=int)
         y = (aligned["y"] > 0).to_numpy(dtype=np.int64)
         return x_raw[keep], y
+
+    def _build_regime_classification(self, bars: pd.DataFrame, cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+        labeling_cfg = cfg.get("labeling") or {}
+        horizon = int(cfg.get("horizon_minutes", 30))
+        trend_threshold_bps = float(labeling_cfg.get("trend_threshold_bps", 8.0))
+        trend_threshold = trend_threshold_bps / 10_000.0
+        vol_state_quantile = float(labeling_cfg.get("vol_state_quantile", 0.6))
+        rolling_vol_window = int(labeling_cfg.get("rolling_vol_window", 20))
+        breadth_window = int(labeling_cfg.get("breadth_window", 15))
+
+        frame = bars.copy()
+        frame.index = pd.RangeIndex(len(frame))
+        x_raw, _ = BasicFeaturePipeline().transform(frame)
+
+        ret_1 = frame["c"].astype(float).pct_change().fillna(0.0)
+        rolling_vol = ret_1.rolling(rolling_vol_window, min_periods=1).std().fillna(0.0)
+        realized_vol_state = (rolling_vol >= rolling_vol.quantile(vol_state_quantile)).astype(float)
+        breadth_proxy = np.sign(frame["c"].astype(float) - frame["o"].astype(float))
+        breadth_proxy = breadth_proxy.rolling(breadth_window, min_periods=1).mean().fillna(0.0)
+        x = np.column_stack([x_raw, rolling_vol.to_numpy(), realized_vol_state.to_numpy(), breadth_proxy.to_numpy()])
+
+        forward_return = frame["c"].shift(-horizon) / frame["c"] - 1.0
+        future_rv = ret_1.pow(2).rolling(horizon, min_periods=1).mean().pow(0.5).shift(-(horizon - 1))
+        high_vol_cutoff = future_rv.quantile(vol_state_quantile)
+        is_high_vol = future_rv >= high_vol_cutoff
+        has_trend = np.abs(forward_return) >= trend_threshold
+
+        labels = np.full(len(frame), 1, dtype=np.int64)  # mean_revert
+        labels[(forward_return > trend_threshold).to_numpy()] = 0  # trend
+        labels[(~has_trend & is_high_vol).to_numpy()] = 2  # high_vol
+        labels[(~has_trend & ~is_high_vol).to_numpy()] = 3  # low_vol
+
+        aligned = pd.DataFrame({"y": labels, "fwd_ret": forward_return, "future_rv": future_rv}).dropna()
+        keep = aligned.index.to_numpy(dtype=int)
+        y = aligned["y"].to_numpy(dtype=np.int64)
+        return x[keep].astype(np.float32), y.astype(np.int64)
 
 
 def validate_task_model_compatibility(spec: TaskSpec, model_name: str) -> None:
