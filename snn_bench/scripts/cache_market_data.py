@@ -66,6 +66,45 @@ def _parse_timeframe(timeframe: str) -> tuple[int, str]:
     raise ValueError(f"Unsupported timeframe '{timeframe}'. Use values like 1Min, 5Min, 1H, 1D.")
 
 
+def _read_json(path: Path) -> dict | list | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _cache_is_current(
+    cfg: BenchmarkConfig,
+    safe_ticker: str,
+    *,
+    today: date,
+    stock_years: int,
+    option_years: int,
+) -> bool:
+    timeframe_dir = cfg.data_paths.backtest_root / safe_ticker / cfg.timeframe
+    index_path = timeframe_dir / "index.json"
+    snapshot_path = cfg.data_paths.snapshot_dir / f"{safe_ticker}.json"
+    options_path = cfg.data_paths.snapshot_dir / "options" / f"{safe_ticker}_options.json"
+
+    index_payload = _read_json(index_path)
+    options_payload = _read_json(options_path)
+    if not isinstance(index_payload, dict) or not isinstance(options_payload, dict):
+        return False
+    if not snapshot_path.exists():
+        return False
+
+    expected_option_window = (today - timedelta(days=365 * option_years)).isoformat()
+    return (
+        index_payload.get("updated_at") == today.isoformat()
+        and index_payload.get("timeframe") == cfg.timeframe
+        and int(index_payload.get("stock_years", -1)) == stock_years
+        and options_payload.get("as_of") == today.isoformat()
+        and options_payload.get("window_start") == expected_option_window
+    )
+
+
 def _cache_single_ticker(
     cfg: BenchmarkConfig,
     ticker: str,
@@ -79,6 +118,23 @@ def _cache_single_ticker(
     stock_start = today - timedelta(days=365 * stock_years)
     option_start = today - timedelta(days=365 * option_years)
     tf_multiplier, tf_timespan = _parse_timeframe(cfg.timeframe)
+
+    if _cache_is_current(cfg, safe_ticker, today=today, stock_years=stock_years, option_years=option_years):
+        timeframe_dir = cfg.data_paths.backtest_root / safe_ticker / cfg.timeframe
+        index_payload = _read_json(timeframe_dir / "index.json") or {}
+        options_payload = _read_json(cfg.data_paths.snapshot_dir / "options" / f"{safe_ticker}_options.json") or {}
+        contracts = options_payload.get("contracts", []) if isinstance(options_payload, dict) else []
+        return {
+            "ticker": safe_ticker,
+            "stock_rows": int(index_payload.get("rows_total", 0)),
+            "stock_years": stock_years,
+            "option_rows": len(contracts) if isinstance(contracts, list) else 0,
+            "option_years": option_years,
+            "snapshot_path": str(cfg.data_paths.snapshot_dir / f"{safe_ticker}.json"),
+            "backtest_index": str(timeframe_dir / "index.json"),
+            "options_path": str(cfg.data_paths.snapshot_dir / "options" / f"{safe_ticker}_options.json"),
+            "skipped_fetch": True,
+        }
 
     stock_rows = client.fetch_bars(
         api_ticker,
@@ -109,6 +165,7 @@ def _cache_single_ticker(
         "timeframe": cfg.timeframe,
         "years": years,
         "rows_total": len(stock_rows),
+        "stock_years": stock_years,
         "updated_at": today.isoformat(),
     }
     (timeframe_dir / "index.json").write_text(json.dumps(index_payload, indent=2), encoding="utf-8")
@@ -135,6 +192,7 @@ def _cache_single_ticker(
         "snapshot_path": str(snapshot_path),
         "backtest_index": str(timeframe_dir / "index.json"),
         "options_path": str(options_path),
+        "skipped_fetch": False,
     }
 
 
