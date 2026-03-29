@@ -60,7 +60,7 @@ def _task_primary_metrics(metrics: dict[str, Any]) -> tuple[str, str | None]:
     primary_ml = str(evaluation.get("primary_ml_metric") or "")
     if not primary_ml:
         eval_payload = metrics.get("eval") or {}
-        for candidate in ("roc_auc", "auc", "accuracy", "f1", "f1_macro", "rmse", "mse"):
+        for candidate in ("f1_macro", "roc_auc", "auc", "accuracy", "f1", "rmse", "mse"):
             if candidate in eval_payload:
                 primary_ml = candidate
                 break

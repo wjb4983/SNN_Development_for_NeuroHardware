@@ -42,6 +42,26 @@ class ExperimentRunnerConfigTest(unittest.TestCase):
         self.assertEqual(ml, "f1")
         self.assertEqual(trading, "sharpe")
 
+
+    def test_primary_metric_resolution_falls_back_to_f1_macro_for_multiclass_eval(self):
+        metrics = {
+            "task": {"evaluation": {}},
+            "eval": {"accuracy": 0.72, "f1_macro": 0.64, "f1": 0.83},
+        }
+        ml, trading = _task_primary_metrics(metrics)
+        self.assertEqual(ml, "f1_macro")
+        self.assertIsNone(trading)
+
+    def test_build_leaderboard_supports_f1_macro(self):
+        completed = [
+            {"run_id": "r1", "model": "snntorch_lif", "task": {"name": "regime_classification"}, "eval": {"f1_macro": 0.51}},
+            {"run_id": "r2", "model": "hmm_gaussian", "task": {"name": "regime_classification"}, "eval": {"f1_macro": 0.66}},
+            {"run_id": "r3", "model": "markov_chain", "task": {"name": "regime_classification"}, "eval": {"f1_macro": 0.49}},
+        ]
+        leaderboard = _build_leaderboard(completed, "eval.f1_macro", "ml", "desc")
+        self.assertEqual([row["run_id"] for row in leaderboard], ["r2", "r1", "r3"])
+        self.assertEqual([row["metric_key"] for row in leaderboard], ["eval.f1_macro", "eval.f1_macro", "eval.f1_macro"])
+
     def test_metric_direction(self):
         self.assertEqual(_metric_direction("roc_auc"), "desc")
         self.assertEqual(_metric_direction("rmse"), "asc")
