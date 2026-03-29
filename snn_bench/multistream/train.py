@@ -39,11 +39,30 @@ def _window_tensor(x: np.ndarray, y: np.ndarray, seq_len: int = 32) -> tuple[np.
 
 
 def _walk_forward_indices(n: int, folds: int, train_ratio: float, val_ratio: float) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    fold_size = n // folds
+    if n < 3 or folds <= 0:
+        return []
+
+    train_ratio = float(train_ratio)
+    val_ratio = float(val_ratio)
+    if train_ratio <= 0 or val_ratio <= 0 or train_ratio + val_ratio >= 1:
+        raise ValueError("invalid split ratios: require train_ratio > 0, val_ratio > 0, and train_ratio + val_ratio < 1")
+
+    min_fold_size = 3
+    while True:
+        tr = int(min_fold_size * train_ratio)
+        va = int(min_fold_size * val_ratio)
+        te = min_fold_size - tr - va
+        if min(tr, va, te) > 0:
+            break
+        min_fold_size += 1
+
+    max_folds = max(1, n // min_fold_size)
+    effective_folds = max(1, min(folds, max_folds))
+    fold_size = max(1, n // effective_folds)
     splits = []
-    for f in range(folds):
+    for f in range(effective_folds):
         start = f * fold_size
-        end = n if f == folds - 1 else (f + 1) * fold_size
+        end = n if f == effective_folds - 1 else (f + 1) * fold_size
         fold_idx = np.arange(start, end)
         tr_end = start + int(len(fold_idx) * train_ratio)
         va_end = tr_end + int(len(fold_idx) * val_ratio)
