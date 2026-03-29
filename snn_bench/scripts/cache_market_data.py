@@ -12,8 +12,33 @@ from snn_bench.data_connectors.massive_client import MassiveClient
 from snn_bench.utils.secrets import load_massive_api_key
 
 
+MAIN_INDEX_TICKERS: tuple[str, ...] = (
+    "SPY",  # S&P 500 proxy
+    "QQQ",  # Nasdaq-100 proxy
+    "DIA",  # Dow Jones proxy
+    "IWM",  # Russell 2000 proxy
+)
+
+TOP_100_MARKET_CAP_TICKERS: tuple[str, ...] = (
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "BRK.B", "AVGO",
+    "LLY", "WMT", "JPM", "V", "XOM", "UNH", "MA", "COST", "ORCL", "HD",
+    "PG", "JNJ", "BAC", "NFLX", "ABBV", "CRM", "KO", "CVX", "MRK", "AMD",
+    "PEP", "TMO", "MCD", "ACN", "CSCO", "ADBE", "LIN", "WFC", "DIS", "ABT",
+    "DHR", "QCOM", "TXN", "VZ", "INTU", "PM", "CAT", "NKE", "RTX", "PFE",
+    "NOW", "IBM", "INTC", "AMGN", "SPGI", "UNP", "COP", "GS", "MS", "LOW",
+    "BX", "HON", "PLD", "BLK", "NEE", "SYK", "AMAT", "GE", "MDT", "LMT",
+    "DE", "TJX", "BMY", "CB", "AXP", "ISRG", "SCHW", "AMT", "C", "ADP",
+    "MO", "BKNG", "TMUS", "MMC", "GILD", "SO", "ETN", "PANW", "VRTX", "CI",
+    "ADI", "MDLZ", "REGN", "DUK", "ELV", "PGR", "ZTS", "KLAC", "CME", "SNPS",
+)
+
+
+def _api_ticker(ticker: str) -> str:
+    return ticker.upper()
+
+
 def _safe_ticker(ticker: str) -> str:
-    return "".join(ch for ch in ticker.upper() if ch.isalnum() or ch in ("-", "_"))
+    return "".join(ch for ch in ticker.upper() if ch.isalnum() or ch in ("-", "_", "."))
 
 
 def _to_npz_arrays(rows: list[dict]) -> dict[str, np.ndarray]:
@@ -28,16 +53,20 @@ def _to_npz_arrays(rows: list[dict]) -> dict[str, np.ndarray]:
     }
 
 
-def cache_market_data(cfg: BenchmarkConfig, stock_years: int, option_years: int) -> dict:
-    safe_ticker = _safe_ticker(cfg.ticker)
+def _cache_single_ticker(
+    cfg: BenchmarkConfig,
+    ticker: str,
+    stock_years: int,
+    option_years: int,
+    client: MassiveClient,
+) -> dict:
+    api_ticker = _api_ticker(ticker)
+    safe_ticker = _safe_ticker(ticker)
     today = date.today()
     stock_start = today - timedelta(days=365 * stock_years)
     option_start = today - timedelta(days=365 * option_years)
 
-    api_key = load_massive_api_key(cfg.massive_api_key_file)
-    client = MassiveClient(api_key=api_key)
-
-    stock_rows = client.fetch_daily_bars(safe_ticker, stock_start, today)
+    stock_rows = client.fetch_daily_bars(api_ticker, stock_start, today)
     snapshot_path = cfg.data_paths.snapshot_dir / f"{safe_ticker}.json"
     MassiveClient.save_json(snapshot_path, stock_rows)
 
@@ -64,7 +93,7 @@ def cache_market_data(cfg: BenchmarkConfig, stock_years: int, option_years: int)
     }
     (timeframe_dir / "index.json").write_text(json.dumps(index_payload, indent=2), encoding="utf-8")
 
-    option_rows = client.fetch_options_snapshots(safe_ticker, as_of=today)
+    option_rows = client.fetch_options_snapshots(api_ticker, as_of=today)
     filtered_options = [r for r in option_rows if r.get("details", {}).get("expiration_date", "") >= option_start.isoformat()]
     options_path = cfg.data_paths.snapshot_dir / "options" / f"{safe_ticker}_options.json"
     MassiveClient.save_json(
@@ -89,9 +118,59 @@ def cache_market_data(cfg: BenchmarkConfig, stock_years: int, option_years: int)
     }
 
 
+def _resolve_tickers(universe: str, ticker: str | None) -> list[str]:
+    if universe == "single":
+        if not ticker:
+            raise ValueError("--ticker is required when --universe=single")
+        return [_api_ticker(ticker)]
+    if universe == "indices":
+        return list(MAIN_INDEX_TICKERS)
+    if universe == "top100":
+        return list(TOP_100_MARKET_CAP_TICKERS)
+    if universe == "all":
+        return list(dict.fromkeys([*MAIN_INDEX_TICKERS, *TOP_100_MARKET_CAP_TICKERS]))
+    raise ValueError(f"Unsupported universe: {universe}")
+
+
+def cache_market_data(cfg: BenchmarkConfig, stock_years: int, option_years: int, universe: str, ticker: str | None) -> dict:
+    api_key = load_massive_api_key(cfg.massive_api_key_file)
+    client = MassiveClient(api_key=api_key)
+    tickers = _resolve_tickers(universe=universe, ticker=ticker)
+    summaries: list[dict] = []
+    for symbol in tickers:
+        symbol_cfg = BenchmarkConfig(
+            ticker=symbol,
+            timeframe=cfg.timeframe,
+            backtest_root=cfg.backtest_root,
+            snapshot_dir=cfg.snapshot_dir,
+            massive_api_key_file=cfg.massive_api_key_file,
+        )
+        summaries.append(
+            _cache_single_ticker(
+                cfg=symbol_cfg,
+                ticker=symbol,
+                stock_years=stock_years,
+                option_years=option_years,
+                client=client,
+            )
+        )
+    return {
+        "universe": universe,
+        "tickers_requested": len(tickers),
+        "tickers_cached": len(summaries),
+        "summaries": summaries,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch and cache stock + option data")
-    parser.add_argument("--ticker", default="AAPL")
+    parser.add_argument("--ticker", default=None, help="Ticker used when --universe=single")
+    parser.add_argument(
+        "--universe",
+        default="all",
+        choices=("single", "indices", "top100", "all"),
+        help="Preset ticker universe to cache",
+    )
     parser.add_argument("--timeframe", default="1D")
     parser.add_argument("--stock-years", type=int, default=5)
     parser.add_argument("--option-years", type=int, default=2)
@@ -100,8 +179,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    cfg = BenchmarkConfig(ticker=args.ticker, timeframe=args.timeframe)
-    summary = cache_market_data(cfg, stock_years=args.stock_years, option_years=args.option_years)
+    cfg = BenchmarkConfig(ticker=args.ticker or "AAPL", timeframe=args.timeframe)
+    summary = cache_market_data(
+        cfg,
+        stock_years=args.stock_years,
+        option_years=args.option_years,
+        universe=args.universe,
+        ticker=args.ticker,
+    )
     print(json.dumps(summary, indent=2))
 
 
