@@ -20,6 +20,11 @@ MAX_YEARS="${MAX_YEARS:-0}"
 USE_DOCKER="${USE_DOCKER:-0}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-snn-bench:latest}"
 
+RUN_MODEL_TASK_MATRIX="${RUN_MODEL_TASK_MATRIX:-0}"
+MATRIX_MODEL_GROUP="${MATRIX_MODEL_GROUP:-baseline}"
+RUN_TASK_RELEVANT_MATRIX="${RUN_TASK_RELEVANT_MATRIX:-0}"
+
+
 if [[ -z "${MASSIVE_API_KEY:-}" && -z "${MASSIVE_API_KEY_FILE:-}" ]]; then
   echo "[warn] MASSIVE_API_KEY or MASSIVE_API_KEY_FILE is not set."
   echo "       Data fetch and training will fail unless an API key is available in fallback locations."
@@ -124,6 +129,23 @@ run_python_module 600s snn_bench.scripts.train \
   --lr 0.001 \
   --out-dir "$OUT_DIR" \
   --max-years "$MAX_YEARS"
+
+
+if [[ "$RUN_MODEL_TASK_MATRIX" == "1" ]]; then
+  echo "[step] Running model x task matrix sweep (MODEL_GROUP=$MATRIX_MODEL_GROUP)"
+  MODEL_GROUP="$MATRIX_MODEL_GROUP" \
+  MAX_YEARS="$MAX_YEARS" \
+  OUT_DIR="$OUT_DIR/matrix" \
+  timeout 5400s ./scripts/train_all_models_tasks.sh "$TICKER" "$TIMEFRAME"
+fi
+
+
+if [[ "$RUN_TASK_RELEVANT_MATRIX" == "1" ]]; then
+  echo "[step] Running task-aware model matrix sweep"
+  MAX_YEARS="$MAX_YEARS" \
+  OUT_DIR="$OUT_DIR/task_relevant_matrix" \
+  timeout 5400s ./scripts/train_task_relevant_models.sh "$TICKER" "$TIMEFRAME"
+fi
 
 echo "[done] Pipeline complete"
 echo "       Metrics: $OUT_DIR/train_metrics.json"
